@@ -16,13 +16,16 @@ vi.mock("@/services/api", () => ({
 }));
 
 // Mutable store state so individual tests can mutate `selectedSession` mid-scan
-// to exercise the race guard.
+// to exercise the race guard. Also simulates `getSessionDisplayName` used by
+// the Stage B title-matcher.
 const mockStoreState: {
   excludeSidechain: boolean;
   selectedSession: ClaudeSession | null;
+  getSessionDisplayName: (id: string, fallback?: string) => string | undefined;
 } = {
   excludeSidechain: false,
   selectedSession: null,
+  getSessionDisplayName: (_id: string, fallback?: string) => fallback,
 };
 vi.mock("@/store/useAppStore", () => ({
   useAppStore: {
@@ -62,6 +65,7 @@ function makeDeps(overrides: Partial<PreloadDependencies> = {}): PreloadDependen
     projects: [],
     selectProject: vi.fn().mockResolvedValue(undefined),
     selectSession: vi.fn().mockResolvedValue(undefined),
+    openSessionPicker: vi.fn(),
     t: (_k: string, fallback?: string) => fallback ?? "Session not found",
     ...overrides,
   };
@@ -74,6 +78,7 @@ describe("preloadSessionFromCli", () => {
     // Reset mutable store state between tests.
     mockStoreState.excludeSidechain = false;
     mockStoreState.selectedSession = null;
+    mockStoreState.getSessionDisplayName = (_id: string, fallback?: string) => fallback;
   });
 
   afterEach(() => {
@@ -203,13 +208,167 @@ describe("preloadSessionFromCli", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
+  // ===== Stage B tests =====
+
+  it("path kind resolves by matching file_path", async () => {
+    const otherSession: ClaudeSession = {
+      ...session,
+      session_id: "other-id",
+      actual_session_id: "00000000-0000-0000-0000-000000000000",
+      file_path: "/home/.claude/projects/demo/other.jsonl",
+    };
+    vi.mocked(api).mockResolvedValueOnce([otherSession, session] as unknown as never);
+    const deps = makeDeps({
+      getStartupSessionHint: vi.fn().mockResolvedValue({
+        kind: "path",
+        value: session.file_path,
+      } as SessionHint),
+      projects: [project],
+    });
+
+    const result = await preloadSessionFromCli(deps);
+
+    expect(result).toEqual({ handled: true, matched: true });
+    expect(deps.selectSession).toHaveBeenCalledWith(session);
+  });
+
+  it("folder kind selects most recent session in matching project", async () => {
+    const older: ClaudeSession = {
+      ...session,
+      session_id: "old-id",
+      actual_session_id: "aaaaaaaa-0000-0000-0000-000000000000",
+      last_modified: "2026-03-01T00:00:00Z",
+    };
+    const newer: ClaudeSession = {
+      ...session,
+      session_id: "new-id",
+      actual_session_id: "bbbbbbbb-0000-0000-0000-000000000000",
+      last_modified: "2026-04-19T00:00:00Z",
+    };
+    vi.mocked(api).mockResolvedValueOnce([older, newer] as unknown as never);
+    const deps = makeDeps({
+      getStartupSessionHint: vi.fn().mockResolvedValue({
+        kind: "folder",
+        value: "demo", // Matches project.path's tail
+      } as SessionHint),
+      projects: [project],
+    });
+
+    const result = await preloadSessionFromCli(deps);
+
+    expect(result.matched).toBe(true);
+    expect(deps.selectSession).toHaveBeenCalledWith(newer);
+  });
+
+  it("folder kind without a matching project shows not-found toast", async () => {
+    const deps = makeDeps({
+      getStartupSessionHint: vi.fn().mockResolvedValue({
+        kind: "folder",
+        value: "nonexistent",
+      } as SessionHint),
+      projects: [project],
+    });
+
+    const result = await preloadSessionFromCli(deps);
+
+    expect(result).toEqual({ handled: true, matched: false });
+    expect(api).not.toHaveBeenCalled(); // Didn't even load sessions
+    expect(toast.error).toHaveBeenCalledWith("Session not found");
+  });
+
+  it("title kind with a single match auto-selects", async () => {
+    const sessionWithSummary: ClaudeSession = {
+      ...session,
+      summary: "Debugging the auth bug with React",
+    };
+    vi.mocked(api).mockResolvedValueOnce([sessionWithSummary] as unknown as never);
+    const deps = makeDeps({
+      getStartupSessionHint: vi.fn().mockResolvedValue({
+        kind: "title",
+        value: "auth bug",
+      } as SessionHint),
+      projects: [project],
+    });
+
+    const result = await preloadSessionFromCli(deps);
+
+    expect(result).toEqual({ handled: true, matched: true });
+    expect(deps.selectSession).toHaveBeenCalledWith(sessionWithSummary);
+    expect(deps.openSessionPicker).not.toHaveBeenCalled();
+  });
+
+  it("title kind with multiple matches opens the session picker", async () => {
+    const s1: ClaudeSession = { ...session, actual_session_id: "id-1", summary: "auth bug fix" };
+    const s2: ClaudeSession = { ...session, actual_session_id: "id-2", summary: "another auth bug" };
+    vi.mocked(api).mockResolvedValueOnce([s1, s2] as unknown as never);
+    const deps = makeDeps({
+      getStartupSessionHint: vi.fn().mockResolvedValue({
+        kind: "title",
+        value: "auth bug",
+      } as SessionHint),
+      projects: [project],
+    });
+
+    const result = await preloadSessionFromCli(deps);
+
+    expect(result).toEqual({ handled: true, matched: false });
+    expect(deps.openSessionPicker).toHaveBeenCalledWith(
+      [
+        { project, session: s1 },
+        { project, session: s2 },
+      ],
+      "auth bug",
+    );
+    expect(deps.selectSession).not.toHaveBeenCalled();
+  });
+
+  it("title kind with zero matches shows not-found toast", async () => {
+    vi.mocked(api).mockResolvedValueOnce([session] as unknown as never);
+    const deps = makeDeps({
+      getStartupSessionHint: vi.fn().mockResolvedValue({
+        kind: "title",
+        value: "nothing matches this",
+      } as SessionHint),
+      projects: [project],
+    });
+
+    const result = await preloadSessionFromCli(deps);
+
+    expect(result).toEqual({ handled: true, matched: false });
+    expect(toast.error).toHaveBeenCalledWith("Session not found");
+    expect(deps.openSessionPicker).not.toHaveBeenCalled();
+  });
+
+  it("title kind respects the user's custom session name from metadata", async () => {
+    // User renamed session to "My payment bug report"; summary is unrelated.
+    // The metadata store keys custom names by `session_id` (the app-wide
+    // identifier); stub + production must agree on that key.
+    const renamedSession: ClaudeSession = {
+      ...session,
+      summary: "Initial checkout investigation",
+    };
+    mockStoreState.getSessionDisplayName = (id, fallback) =>
+      id === renamedSession.session_id ? "My payment bug report" : fallback;
+    vi.mocked(api).mockResolvedValueOnce([renamedSession] as unknown as never);
+    const deps = makeDeps({
+      getStartupSessionHint: vi.fn().mockResolvedValue({
+        kind: "title",
+        value: "payment bug",
+      } as SessionHint),
+      projects: [project],
+    });
+
+    const result = await preloadSessionFromCli(deps);
+
+    expect(result.matched).toBe(true);
+    expect(deps.selectSession).toHaveBeenCalledWith(renamedSession);
+  });
+
   // Race simulation: user clicks a session while selectProject is awaiting.
-  // Exercises the post-selectProject guard added between selectProject and
-  // selectSession, not the loop-level guard.
+  // Exercises the post-selectProject guard inside commitSingleMatch.
   it("skips selectSession when selectedSession mutates during selectProject await", async () => {
     vi.mocked(api).mockResolvedValueOnce([session] as unknown as never);
     const selectProject = vi.fn().mockImplementation(async () => {
-      // Simulate user picking a session while project loads.
       mockStoreState.selectedSession = session;
     });
     const selectSession = vi.fn().mockResolvedValue(undefined);
@@ -228,13 +387,12 @@ describe("preloadSessionFromCli", () => {
 
     expect(result).toEqual({ handled: true, matched: false });
     expect(selectProject).toHaveBeenCalledWith(project);
-    // The CLI hint must not clobber the user's mid-flight manual selection.
     expect(selectSession).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
   });
 
   // Real race simulation: user clicks a session mid-scan. Exercises the
-  // per-loop guard inside findSessionAcrossProjects, not just the final guard.
+  // per-loop guard inside scan helpers, not just the final guard.
   it("aborts scan loop when selectedSession mutates mid-scan", async () => {
     const projectA: ClaudeProject = { ...project, name: "a", path: "/a" };
     const projectB: ClaudeProject = { ...project, name: "b", path: "/b" };
