@@ -119,6 +119,7 @@ export interface AppStoreState {
   projectTokenStatsPagination: ProjectTokenStatsPagination;
   subagentSessions: SubagentSession[];
   parentSessionStack: ClaudeSession[];
+  toolUseToSubagentMap: Map<string, string>;
 
   // Search state
   searchQuery: string;
@@ -224,7 +225,7 @@ export interface AppStoreActions {
     projectPath: string
   ) => Promise<SessionComparison>;
   clearTokenStats: () => void;
-  loadSubagents: (sessionPath: string) => Promise<void>;
+  loadSubagents: (sessionPath: string, sourceMessages: ClaudeMessage[]) => Promise<void>;
   navigateToSubagent: (subagent: SubagentSession) => Promise<void>;
   navigateBackToParent: () => Promise<void>;
 
