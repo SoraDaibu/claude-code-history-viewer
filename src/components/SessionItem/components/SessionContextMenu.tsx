@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Pencil,
   RotateCcw,
@@ -11,11 +12,15 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
+import { computeMenuPosition, type Boundary } from "@/utils/contextMenu";
 
 interface SessionContextMenuProps {
-  position: { x: number; y: number };
+  position: { x: number; y: number; boundary?: Boundary | null };
   hasCustomName: boolean;
   supportsNativeRename: boolean;
+  supportsResumeCommand: boolean;
+  supportsSessionDeletion: boolean;
+  supportsRevealInFinder: boolean;
   providerId: string;
   onClose: () => void;
   onRenameClick: (e: React.MouseEvent) => void;
@@ -32,6 +37,9 @@ export const SessionContextMenu: React.FC<SessionContextMenuProps> = ({
   position,
   hasCustomName,
   supportsNativeRename,
+  supportsResumeCommand,
+  supportsSessionDeletion,
+  supportsRevealInFinder,
   providerId,
   onClose,
   onRenameClick,
@@ -45,7 +53,7 @@ export const SessionContextMenu: React.FC<SessionContextMenuProps> = ({
 }) => {
   const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
-  const [adjustedPosition, setAdjustedPosition] = useState(position);
+  const [adjustedPosition, setAdjustedPosition] = useState({ x: position.x, y: position.y });
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -65,20 +73,41 @@ export const SessionContextMenu: React.FC<SessionContextMenuProps> = ({
     };
   }, [onClose]);
 
+  // Close on scroll or resize. Arm one animation frame after mount so a
+  // synchronous scroll burst during the click-to-open sequence can't close
+  // the menu immediately. Capture phase on scroll catches scroll on any
+  // descendant (scroll events don't bubble, but capture flows root → target).
+  // removeEventListener must match the capture flag or the listener leaks.
+  useEffect(() => {
+    let armed = false;
+    const raf = requestAnimationFrame(() => {
+      armed = true;
+    });
+    const handleScroll = () => {
+      if (armed) onClose();
+    };
+    const handleResize = () => {
+      if (armed) onClose();
+    };
+    document.addEventListener("scroll", handleScroll, { capture: true, passive: true });
+    window.addEventListener("resize", handleResize);
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener("scroll", handleScroll, { capture: true });
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [onClose]);
+
   useLayoutEffect(() => {
     if (menuRef.current) {
       const rect = menuRef.current.getBoundingClientRect();
-      let x = position.x;
-      let y = position.y;
-      if (x + rect.width > window.innerWidth) {
-        x = window.innerWidth - rect.width - 8;
-      }
-      if (y + rect.height > window.innerHeight) {
-        y = window.innerHeight - rect.height - 8;
-      }
-      x = Math.max(8, x);
-      y = Math.max(8, y);
-      setAdjustedPosition({ x, y });
+      setAdjustedPosition(
+        computeMenuPosition(
+          { x: position.x, y: position.y },
+          { width: rect.width, height: rect.height },
+          position.boundary,
+        ),
+      );
     }
   }, [position]);
 
@@ -96,7 +125,7 @@ export const SessionContextMenu: React.FC<SessionContextMenuProps> = ({
     };
   };
 
-  return (
+  return createPortal(
     <div
       ref={menuRef}
       role="menu"
@@ -130,7 +159,9 @@ export const SessionContextMenu: React.FC<SessionContextMenuProps> = ({
               <span>
                 {providerId === "opencode"
                   ? t("session.nativeRename.menuItemOpenCode", "Rename in OpenCode")
-                  : t("session.nativeRename.menuItem", "Rename in Claude Code")}
+                  : providerId === "forgecode"
+                    ? t("session.nativeRename.menuItemForgeCode", "Rename in ForgeCode")
+                    : t("session.nativeRename.menuItem", "Rename in Claude Code")}
               </span>
             </button>
           </>
@@ -143,7 +174,7 @@ export const SessionContextMenu: React.FC<SessionContextMenuProps> = ({
           <span>{t("session.copySessionId", "Copy Session ID")}</span>
         </button>
 
-        {providerId === "claude" && (
+        {supportsResumeCommand && (
           <button type="button" role="menuitem" onClick={handleAction(onCopyResumeCommand)} className={menuItemClass}>
             <Play className="w-3.5 h-3.5" />
             <span>{t("session.copyResumeCommand", "Copy Resume Command")}</span>
@@ -155,23 +186,30 @@ export const SessionContextMenu: React.FC<SessionContextMenuProps> = ({
           <span>{t("session.copyFilePath", "Copy File Path")}</span>
         </button>
 
-        <button type="button" role="menuitem" onClick={handleAction(onRevealInFinder)} className={menuItemClass}>
-          <FolderOpen className="w-3.5 h-3.5" />
-          <span>{t("session.showJsonlFile", "Show JSONL File")}</span>
-        </button>
+        {supportsRevealInFinder && (
+          <button type="button" role="menuitem" onClick={handleAction(onRevealInFinder)} className={menuItemClass}>
+            <FolderOpen className="w-3.5 h-3.5" />
+            <span>{t("session.showJsonlFile", "Show JSONL File")}</span>
+          </button>
+        )}
 
-        <div className="my-1 border-t border-border/50" />
+        {supportsSessionDeletion && (
+          <>
+            <div className="my-1 border-t border-border/50" />
 
-        <button
-          type="button"
-          role="menuitem"
-          onClick={handleAction(onDeleteSession)}
-          className={cn(menuItemClass, "text-destructive hover:text-destructive")}
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-          <span>{t("session.deleteSession", "Delete Session")}</span>
-        </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={handleAction(onDeleteSession)}
+              className={cn(menuItemClass, "text-destructive hover:text-destructive")}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{t("session.deleteSession", "Delete Session")}</span>
+            </button>
+          </>
+        )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

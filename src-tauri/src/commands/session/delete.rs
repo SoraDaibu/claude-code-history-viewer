@@ -9,6 +9,10 @@ use tauri::command;
 /// well-formed session ID before moving anything.
 #[command]
 pub async fn delete_session(file_path: String) -> Result<(), String> {
+    if file_path.starts_with("forgecode://") || file_path.starts_with("forgecode-db://") {
+        return crate::providers::forgecode::delete_conversation(&file_path);
+    }
+
     let path = Path::new(&file_path);
 
     if !path.is_absolute() {
@@ -60,6 +64,7 @@ pub async fn delete_session(file_path: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;
 
@@ -91,6 +96,7 @@ mod tests {
         assert_eq!(err, "Invalid session ID format");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn reject_symlink() {
         let dir = TempDir::new().unwrap();

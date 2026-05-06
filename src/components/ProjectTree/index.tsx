@@ -102,10 +102,12 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
     const counts: Record<ProviderTabId, number> = {
       all: projects.length,
       aider: 0,
+      antigravity: 0,
       claude: 0,
       cline: 0,
       codex: 0,
       cursor: 0,
+      forgecode: 0,
       gemini: 0,
       opencode: 0,
     };
@@ -616,6 +618,7 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
         id={asideId}
         aria-label={t("project.explorer")}
         tabIndex={-1}
+        data-menu-boundary
         className={cn("flex-shrink-0 bg-sidebar border-r-0 flex h-full", isResizing && "select-none")}
         style={sidebarStyle}
       >
@@ -670,6 +673,7 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
       id={asideId}
       aria-label={t("project.explorer")}
       tabIndex={-1}
+      data-menu-boundary
       className={cn("flex-shrink-0 bg-sidebar border-r-0 flex h-full", !width && (!onToggleCollapse && onClose ? "w-full" : "w-64"), isResizing && "select-none")}
       style={sidebarStyle}
     >

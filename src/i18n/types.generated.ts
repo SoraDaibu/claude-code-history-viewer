@@ -5,8 +5,8 @@
  * 직접 수정하지 마세요.
  *
  * 생성 명령: pnpm run generate:i18n-types
- * 생성 시간: 2026-03-28T04:13:32.935Z
- * 총 키 개수: 1722
+ * 생성 시간: 2026-05-06T15:19:30.989Z
+ * 총 키 개수: 1770
  * Namespace 수: 11
  */
 
@@ -40,7 +40,7 @@ export type I18nNamespace =
   | 'recentEdits';
 
 /**
- * common namespace의 번역 키 (156개)
+ * common namespace의 번역 키 (160개)
  * 파일: locales/{lang}/common.json
  */
 export type CommonKeys =
@@ -54,6 +54,7 @@ export type CommonKeys =
   | 'common.appName'
   | 'common.back'
   | 'common.cancel'
+  | 'common.clear'
   | 'common.close'
   | 'common.collapse'
   | 'common.commandPalette'
@@ -106,11 +107,13 @@ export type CommonKeys =
   | 'common.ok'
   | 'common.pending'
   | 'common.provider.aider'
+  | 'common.provider.antigravity'
   | 'common.provider.claude'
   | 'common.provider.cline'
   | 'common.provider.codex'
   | 'common.provider.cursor'
   | 'common.provider.detectError'
+  | 'common.provider.forgecode'
   | 'common.provider.gemini'
   | 'common.provider.opencode'
   | 'common.refresh'
@@ -125,6 +128,7 @@ export type CommonKeys =
   | 'common.settings.changeFolder'
   | 'common.settings.checkUpdate'
   | 'common.settings.checking'
+  | 'common.settings.filter.showSubagentMessages'
   | 'common.settings.filter.showSystemMessages'
   | 'common.settings.filter.title'
   | 'common.settings.font.100'
@@ -202,7 +206,7 @@ export type CommonKeys =
   | 'time.yesterday';
 
 /**
- * analytics namespace의 번역 키 (179개)
+ * analytics namespace의 번역 키 (180개)
  * 파일: locales/{lang}/analytics.json
  */
 export type AnalyticsKeys =
@@ -238,6 +242,7 @@ export type AnalyticsKeys =
   | 'analytics.cacheCreation'
   | 'analytics.cacheRead'
   | 'analytics.calculating'
+  | 'analytics.calendarTotal'
   | 'analytics.conversationOnly'
   | 'analytics.count'
   | 'analytics.currentSession'
@@ -387,7 +392,7 @@ export type AnalyticsKeys =
   | 'analytics.weeklyActivity';
 
 /**
- * session namespace의 번역 키 (178개)
+ * session namespace의 번역 키 (196개)
  * 파일: locales/{lang}/session.json
  */
 export type SessionKeys =
@@ -400,6 +405,7 @@ export type SessionKeys =
   | 'project.a11y.selectedState'
   | 'project.addPattern'
   | 'project.collapseSidebar'
+  | 'project.copyPath'
   | 'project.count'
   | 'project.currentSelection'
   | 'project.expandSidebar'
@@ -414,8 +420,10 @@ export type SessionKeys =
   | 'project.hide'
   | 'project.main'
   | 'project.notFound'
+  | 'project.pathCopied'
   | 'project.removePattern'
   | 'project.resetProviderFilters'
+  | 'project.searchPlaceholder'
   | 'project.selectToView'
   | 'project.title'
   | 'project.unhide'
@@ -485,6 +493,11 @@ export type SessionKeys =
   | 'session.copyResumeCommand'
   | 'session.copySessionId'
   | 'session.count'
+  | 'session.deleteConfirm'
+  | 'session.deleteError'
+  | 'session.deleteSession'
+  | 'session.deleteSuccess'
+  | 'session.deleteTitle'
   | 'session.export.button'
   | 'session.export.error'
   | 'session.export.exporting'
@@ -540,9 +553,11 @@ export type SessionKeys =
   | 'session.loading'
   | 'session.nativeRename.currentName'
   | 'session.nativeRename.description'
+  | 'session.nativeRename.descriptionForgeCode'
   | 'session.nativeRename.descriptionOpenCode'
   | 'session.nativeRename.label'
   | 'session.nativeRename.menuItem'
+  | 'session.nativeRename.menuItemForgeCode'
   | 'session.nativeRename.menuItemOpenCode'
   | 'session.nativeRename.placeholder'
   | 'session.nativeRename.preview'
@@ -550,9 +565,11 @@ export type SessionKeys =
   | 'session.nativeRename.resetMenuItem'
   | 'session.nativeRename.success'
   | 'session.nativeRename.title'
+  | 'session.nativeRename.titleForgeCode'
   | 'session.nativeRename.titleOpenCode'
   | 'session.nativeRename.titlePlaceholder'
   | 'session.nativeRename.warning'
+  | 'session.nativeRename.warningForgeCode'
   | 'session.nativeRename.warningOpenCode'
   | 'session.refresh'
   | 'session.rename'
@@ -562,21 +579,28 @@ export type SessionKeys =
   | 'session.renamePlaceholder'
   | 'session.resetError'
   | 'session.resetName'
+  | 'session.revealError'
   | 'session.saveError'
   | 'session.scanning'
   | 'session.select'
   | 'session.selectDescription'
+  | 'session.showJsonlFile'
   | 'session.summaryNotFound'
   | 'session.syncError'
-  | 'session.title';
+  | 'session.title'
+  | 'sessionPicker.cancelled'
+  | 'sessionPicker.empty'
+  | 'sessionPicker.subtitle'
+  | 'sessionPicker.title';
 
 /**
- * settings namespace의 번역 키 (527개)
+ * settings namespace의 번역 키 (529개)
  * 파일: locales/{lang}/settings.json
  */
 export type SettingsKeys =
   | 'folderPicker.backButton'
   | 'folderPicker.change'
+  | 'folderPicker.customPathDetected'
   | 'folderPicker.folderSelectError'
   | 'folderPicker.folderSelectErrorDetails'
   | 'folderPicker.help'
@@ -585,6 +609,7 @@ export type SettingsKeys =
   | 'folderPicker.invalidFolder'
   | 'folderPicker.newFolder'
   | 'folderPicker.notFound'
+  | 'folderPicker.openSettings'
   | 'folderPicker.select'
   | 'folderPicker.selectButton'
   | 'folderPicker.selectFolderTitle'
@@ -1179,12 +1204,13 @@ export type ToolsKeys =
   | 'tools.webSearch';
 
 /**
- * error namespace의 번역 키 (37개)
+ * error namespace의 번역 키 (38개)
  * 파일: locales/{lang}/error.json
  */
 export type ErrorKeys =
   | 'error.apologize'
   | 'error.applyPresetFailed'
+  | 'error.clipboardFailed'
   | 'error.copied'
   | 'error.copyErrorInfo'
   | 'error.copyTemplate.browserInfo'
@@ -1322,7 +1348,7 @@ export type MessageKeys =
   | 'navigator.userOnly';
 
 /**
- * renderers namespace의 번역 키 (358개)
+ * renderers namespace의 번역 키 (380개)
  * 파일: locales/{lang}/renderers.json
  */
 export type RenderersKeys =
@@ -1354,6 +1380,8 @@ export type RenderersKeys =
   | 'agentTaskGroup.transcript'
   | 'assistantMessageDetails.cacheCreation'
   | 'assistantMessageDetails.cacheRead'
+  | 'assistantMessageDetails.costEstimated'
+  | 'assistantMessageDetails.estimated'
   | 'assistantMessageDetails.input'
   | 'assistantMessageDetails.model'
   | 'assistantMessageDetails.output'
@@ -1577,10 +1605,29 @@ export type RenderersKeys =
   | 'rendererLabels.subject'
   | 'rendererLabels.task'
   | 'rendererLabels.type'
+  | 'renderers.agentTool.backToParent'
+  | 'renderers.agentTool.background'
+  | 'renderers.agentTool.isolation'
+  | 'renderers.agentTool.messages'
+  | 'renderers.agentTool.prompt'
+  | 'renderers.agentTool.result'
+  | 'renderers.agentTool.subagentSessions'
+  | 'renderers.agentTool.title'
+  | 'renderers.agentTool.togglePrompt'
+  | 'renderers.agentTool.toggleResult'
+  | 'renderers.agentTool.viewConversation'
   | 'renderers.containerUpload.description'
   | 'renderers.containerUpload.title'
   | 'renderers.globToolRenderer.path'
   | 'renderers.globToolRenderer.pattern'
+  | 'renderers.opencodeStep.reason.completed'
+  | 'renderers.opencodeStep.reason.end_turn'
+  | 'renderers.opencodeStep.reason.tool-calls'
+  | 'renderers.opencodeStep.title'
+  | 'renderers.opencodeStep.tokens.cache'
+  | 'renderers.opencodeStep.tokens.input'
+  | 'renderers.opencodeStep.tokens.output'
+  | 'renderers.opencodeStep.tokens.reasoning'
   | 'renderers.readToolRenderer.limit'
   | 'renderers.readToolRenderer.offset'
   | 'renderers.taskOutputToolRenderer.block'
@@ -1641,6 +1688,7 @@ export type RenderersKeys =
   | 'taskOperation.taskCount_plural'
   | 'taskOperation.taskOperations'
   | 'taskOperation.taskOutput'
+  | 'taskOperation.updated'
   | 'terminalExecutionResultRenderer.stderr'
   | 'terminalExecutionResultRenderer.stdout'
   | 'terminalStreamRenderer.exitCode'
@@ -1889,6 +1937,7 @@ export type TranslationKey =
   | 'analytics.cacheCreation'
   | 'analytics.cacheRead'
   | 'analytics.calculating'
+  | 'analytics.calendarTotal'
   | 'analytics.conversationOnly'
   | 'analytics.count'
   | 'analytics.currentSession'
@@ -2038,6 +2087,8 @@ export type TranslationKey =
   | 'analytics.weeklyActivity'
   | 'assistantMessageDetails.cacheCreation'
   | 'assistantMessageDetails.cacheRead'
+  | 'assistantMessageDetails.costEstimated'
+  | 'assistantMessageDetails.estimated'
   | 'assistantMessageDetails.input'
   | 'assistantMessageDetails.model'
   | 'assistantMessageDetails.output'
@@ -2136,6 +2187,7 @@ export type TranslationKey =
   | 'common.appName'
   | 'common.back'
   | 'common.cancel'
+  | 'common.clear'
   | 'common.close'
   | 'common.collapse'
   | 'common.commandPalette'
@@ -2188,11 +2240,13 @@ export type TranslationKey =
   | 'common.ok'
   | 'common.pending'
   | 'common.provider.aider'
+  | 'common.provider.antigravity'
   | 'common.provider.claude'
   | 'common.provider.cline'
   | 'common.provider.codex'
   | 'common.provider.cursor'
   | 'common.provider.detectError'
+  | 'common.provider.forgecode'
   | 'common.provider.gemini'
   | 'common.provider.opencode'
   | 'common.refresh'
@@ -2207,6 +2261,7 @@ export type TranslationKey =
   | 'common.settings.changeFolder'
   | 'common.settings.checkUpdate'
   | 'common.settings.checking'
+  | 'common.settings.filter.showSubagentMessages'
   | 'common.settings.filter.showSystemMessages'
   | 'common.settings.filter.title'
   | 'common.settings.font.100'
@@ -2297,6 +2352,7 @@ export type TranslationKey =
   | 'documentRenderer.urlPdf'
   | 'error.apologize'
   | 'error.applyPresetFailed'
+  | 'error.clipboardFailed'
   | 'error.copied'
   | 'error.copyErrorInfo'
   | 'error.copyTemplate.browserInfo'
@@ -2405,6 +2461,7 @@ export type TranslationKey =
   | 'filter.title'
   | 'folderPicker.backButton'
   | 'folderPicker.change'
+  | 'folderPicker.customPathDetected'
   | 'folderPicker.folderSelectError'
   | 'folderPicker.folderSelectErrorDetails'
   | 'folderPicker.help'
@@ -2413,6 +2470,7 @@ export type TranslationKey =
   | 'folderPicker.invalidFolder'
   | 'folderPicker.newFolder'
   | 'folderPicker.notFound'
+  | 'folderPicker.openSettings'
   | 'folderPicker.select'
   | 'folderPicker.selectButton'
   | 'folderPicker.selectFolderTitle'
@@ -2564,6 +2622,7 @@ export type TranslationKey =
   | 'project.a11y.selectedState'
   | 'project.addPattern'
   | 'project.collapseSidebar'
+  | 'project.copyPath'
   | 'project.count'
   | 'project.currentSelection'
   | 'project.expandSidebar'
@@ -2578,8 +2637,10 @@ export type TranslationKey =
   | 'project.hide'
   | 'project.main'
   | 'project.notFound'
+  | 'project.pathCopied'
   | 'project.removePattern'
   | 'project.resetProviderFilters'
+  | 'project.searchPlaceholder'
   | 'project.selectToView'
   | 'project.title'
   | 'project.unhide'
@@ -2632,10 +2693,29 @@ export type TranslationKey =
   | 'rendererLabels.subject'
   | 'rendererLabels.task'
   | 'rendererLabels.type'
+  | 'renderers.agentTool.backToParent'
+  | 'renderers.agentTool.background'
+  | 'renderers.agentTool.isolation'
+  | 'renderers.agentTool.messages'
+  | 'renderers.agentTool.prompt'
+  | 'renderers.agentTool.result'
+  | 'renderers.agentTool.subagentSessions'
+  | 'renderers.agentTool.title'
+  | 'renderers.agentTool.togglePrompt'
+  | 'renderers.agentTool.toggleResult'
+  | 'renderers.agentTool.viewConversation'
   | 'renderers.containerUpload.description'
   | 'renderers.containerUpload.title'
   | 'renderers.globToolRenderer.path'
   | 'renderers.globToolRenderer.pattern'
+  | 'renderers.opencodeStep.reason.completed'
+  | 'renderers.opencodeStep.reason.end_turn'
+  | 'renderers.opencodeStep.reason.tool-calls'
+  | 'renderers.opencodeStep.title'
+  | 'renderers.opencodeStep.tokens.cache'
+  | 'renderers.opencodeStep.tokens.input'
+  | 'renderers.opencodeStep.tokens.output'
+  | 'renderers.opencodeStep.tokens.reasoning'
   | 'renderers.readToolRenderer.limit'
   | 'renderers.readToolRenderer.offset'
   | 'renderers.taskOutputToolRenderer.block'
@@ -2712,6 +2792,11 @@ export type TranslationKey =
   | 'session.copyResumeCommand'
   | 'session.copySessionId'
   | 'session.count'
+  | 'session.deleteConfirm'
+  | 'session.deleteError'
+  | 'session.deleteSession'
+  | 'session.deleteSuccess'
+  | 'session.deleteTitle'
   | 'session.export.button'
   | 'session.export.error'
   | 'session.export.exporting'
@@ -2767,9 +2852,11 @@ export type TranslationKey =
   | 'session.loading'
   | 'session.nativeRename.currentName'
   | 'session.nativeRename.description'
+  | 'session.nativeRename.descriptionForgeCode'
   | 'session.nativeRename.descriptionOpenCode'
   | 'session.nativeRename.label'
   | 'session.nativeRename.menuItem'
+  | 'session.nativeRename.menuItemForgeCode'
   | 'session.nativeRename.menuItemOpenCode'
   | 'session.nativeRename.placeholder'
   | 'session.nativeRename.preview'
@@ -2777,9 +2864,11 @@ export type TranslationKey =
   | 'session.nativeRename.resetMenuItem'
   | 'session.nativeRename.success'
   | 'session.nativeRename.title'
+  | 'session.nativeRename.titleForgeCode'
   | 'session.nativeRename.titleOpenCode'
   | 'session.nativeRename.titlePlaceholder'
   | 'session.nativeRename.warning'
+  | 'session.nativeRename.warningForgeCode'
   | 'session.nativeRename.warningOpenCode'
   | 'session.refresh'
   | 'session.rename'
@@ -2789,13 +2878,19 @@ export type TranslationKey =
   | 'session.renamePlaceholder'
   | 'session.resetError'
   | 'session.resetName'
+  | 'session.revealError'
   | 'session.saveError'
   | 'session.scanning'
   | 'session.select'
   | 'session.selectDescription'
+  | 'session.showJsonlFile'
   | 'session.summaryNotFound'
   | 'session.syncError'
   | 'session.title'
+  | 'sessionPicker.cancelled'
+  | 'sessionPicker.empty'
+  | 'sessionPicker.subtitle'
+  | 'sessionPicker.title'
   | 'settings.context.userWide'
   | 'settings.context.userWideDesc'
   | 'settings.customDirectories'
@@ -3387,6 +3482,7 @@ export type TranslationKey =
   | 'taskOperation.taskCount_plural'
   | 'taskOperation.taskOperations'
   | 'taskOperation.taskOutput'
+  | 'taskOperation.updated'
   | 'terminalExecutionResultRenderer.stderr'
   | 'terminalExecutionResultRenderer.stdout'
   | 'terminalStreamRenderer.exitCode'
@@ -3608,6 +3704,7 @@ export type TranslationPrefix =
   | 'searchResultRenderer'
   | 'serverToolUseRenderer'
   | 'session'
+  | 'sessionPicker'
   | 'settings'
   | 'settingsManager'
   | 'simpleUpdateModal'

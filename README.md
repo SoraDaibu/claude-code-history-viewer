@@ -6,7 +6,7 @@
 
 **The unified history viewer for AI coding assistants.**
 
-Browse, search, and analyze conversations from **Claude Code**, **Gemini CLI**, **Codex CLI**, **Cline**, **Cursor**, **Aider**, and **OpenCode** — as a desktop app or headless server. 100% offline.
+Browse, search, and analyze conversations from **Claude Code**, **Gemini CLI**, **Antigravity**, **Codex CLI**, **Cline**, **Cursor**, **Aider**, **OpenCode**, and **ForgeCode** — as a desktop app or headless server. 100% offline.
 
 [![Version](https://img.shields.io/github/v/release/jhlee0409/claude-code-history-viewer?label=Version&color=blue)](https://github.com/jhlee0409/claude-code-history-viewer/releases)
 [![Stars](https://img.shields.io/github/stars/jhlee0409/claude-code-history-viewer?style=flat&color=yellow)](https://github.com/jhlee0409/claude-code-history-viewer/stargazers)
@@ -63,19 +63,23 @@ See [Server Mode](#server-mode-webui) for Docker, VPS, and systemd setup.
 
 AI coding assistants generate thousands of conversation messages, but none of them provide a way to look back at your history across tools. CCHV solves this.
 
-**Seven assistants. One viewer.** Switch between Claude Code, Gemini CLI, Codex CLI, Cline, Cursor, Aider, and OpenCode sessions seamlessly — compare token usage, search across providers, and analyze your workflow in a single interface.
+**Nine assistants. One viewer.** Switch between Claude Code, Gemini CLI, Antigravity, Codex CLI, Cline, Cursor, Aider, OpenCode, and ForgeCode sessions seamlessly — compare token usage, search across providers, and analyze your workflow in a single interface.
 
 | Provider | Data Location | What You Get |
 |----------|--------------|--------------|
 | **Claude Code** | `~/.claude/projects/` | Full conversation history, tool use, thinking, costs |
 | **Gemini CLI** | `~/.gemini/history/` | Conversation history with tool calls |
+| **Antigravity** | `~/.gemini/antigravity/` | Conversation state under `brain/` plus token monitor data under `.token-monitor/rpc-cache/v1/` |
 | **Codex CLI** | `~/.codex/sessions/` | Session rollouts with agent responses |
 | **Cline** | `~/.cline/tasks/` | Task-based conversation history |
 | **Cursor** | `~/.cursor/` | Composer and chat conversations |
 | **Aider** | Project directories | Chat history and edit logs |
 | **OpenCode** | `~/.local/share/opencode/` | Conversation sessions and tool results |
+| **ForgeCode** | `~/.forge/.forge.db` | Conversation history from SQLite database |
 
 No vendor lock-in. No cloud dependency. Your local conversation files, beautifully rendered.
+
+Antigravity note: the viewer resolves the Antigravity root as `~/.gemini/antigravity` and then reads session state from `brain/` plus usage/cache artifacts from `.token-monitor/rpc-cache/v1/`; this matches the current runtime layout and root resolver in `src-tauri/src/commands/antigravity.rs`.
 
 ## Table of Contents
 
@@ -97,7 +101,7 @@ No vendor lock-in. No cloud dependency. Your local conversation files, beautiful
 
 | Feature | Description |
 |---------|-------------|
-| **Multi-Provider Support** | Unified viewer for **Claude Code**, **Gemini CLI**, **Codex CLI**, **Cline**, **Cursor**, **Aider**, and **OpenCode** — filter by provider, compare across tools |
+| **Multi-Provider Support** | Unified viewer for **Claude Code**, **Gemini CLI**, **Antigravity**, **Codex CLI**, **Cline**, **Cursor**, **Aider**, **OpenCode**, and **ForgeCode** — filter by provider, compare across tools |
 | **Conversation Browser** | Navigate conversations by project/session with worktree grouping |
 | **Global Search** | Search across all conversations from all providers instantly |
 | **Analytics Dashboard** | Dual-mode token stats (billing vs conversation), cost breakdown, and provider distribution charts |
@@ -105,6 +109,12 @@ No vendor lock-in. No cloud dependency. Your local conversation files, beautiful
 | **Settings Manager** | Scope-aware Claude Code settings editor with MCP server management |
 | **Message Navigator** | Right-side collapsible TOC for quick conversation navigation |
 | **Real-time Monitoring** | Live session file watching for instant updates |
+
+### Provider Notes
+
+| Provider | Notes |
+|---------|-------|
+| **Antigravity** | Loaded through the standard provider pipeline. Sessions come from the token monitor cache and participate in project/session views, token stats, analytics, and global search without a separate UI mode. |
 
 ### New in v1.10.0
 
@@ -323,10 +333,27 @@ GET /health
 ## Usage
 
 1. Launch the app
-2. It automatically scans for conversation data from all supported providers (Claude Code, Gemini CLI, Codex CLI, Cline, Cursor, Aider, OpenCode)
+2. It automatically scans for conversation data from all supported providers (Claude Code, Gemini CLI, Codex CLI, Cline, Cursor, Aider, OpenCode, ForgeCode)
 3. Browse projects in the left sidebar — filter by provider using the tab bar
 4. Click a session to view messages
 5. Use tabs to switch between Messages, Analytics, Token Stats, Recent Edits, and Session Board
+
+### Command-line flags
+
+Launch the app pre-focused on a specific session by passing a `--session` flag:
+
+```bash
+# Full UUID
+claude-code-history-viewer --session 1265cd74-caa9-472e-b343-c4f44b5cf12c
+
+# UUID prefix (8+ hex-or-dash chars, up to 36) — first match wins
+claude-code-history-viewer --session 1265cd74
+
+# Equals form also works
+claude-code-history-viewer --session=1265cd74
+```
+
+The viewer scans every known project, navigates to the matching session, and falls back to normal startup if no session matches. Values that are neither hex-or-dash of length 8..36 nor an absolute path are silently ignored.
 
 ## Accessibility
 

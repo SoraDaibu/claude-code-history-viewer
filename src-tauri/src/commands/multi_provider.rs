@@ -33,10 +33,12 @@ pub async fn scan_all_projects(
             "claude".to_string(),
             "codex".to_string(),
             "gemini".to_string(),
+            "forgecode".to_string(),
             "opencode".to_string(),
             "cline".to_string(),
             "cursor".to_string(),
             "aider".to_string(),
+            "antigravity".to_string(),
         ]
     });
 
@@ -107,6 +109,16 @@ pub async fn scan_all_projects(
         }
     }
 
+    // ForgeCode
+    if providers_to_scan.iter().any(|p| p == "forgecode") {
+        match providers::forgecode::scan_projects() {
+            Ok(projects) => all_projects.extend(projects),
+            Err(e) => {
+                log::warn!("ForgeCode scan failed: {e}");
+            }
+        }
+    }
+
     // OpenCode
     if providers_to_scan.iter().any(|p| p == "opencode") {
         match providers::opencode::scan_projects() {
@@ -143,6 +155,16 @@ pub async fn scan_all_projects(
             Ok(projects) => all_projects.extend(projects),
             Err(e) => {
                 log::warn!("Aider scan failed: {e}");
+            }
+        }
+    }
+
+    // Antigravity
+    if providers_to_scan.iter().any(|p| p == "antigravity") {
+        match providers::antigravity::scan_projects() {
+            Ok(projects) => all_projects.extend(projects),
+            Err(e) => {
+                log::warn!("Antigravity scan failed: {e}");
             }
         }
     }
@@ -221,10 +243,12 @@ pub async fn load_provider_sessions(
         }
         "codex" => providers::codex::load_sessions(&project_path, exclude),
         "gemini" => providers::gemini::load_sessions(&project_path, exclude),
+        "forgecode" => providers::forgecode::load_sessions(&project_path, exclude),
         "opencode" => providers::opencode::load_sessions(&project_path, exclude),
         "cline" => providers::cline::load_sessions(&project_path, exclude),
         "cursor" => providers::cursor::load_sessions(&project_path, exclude),
         "aider" => providers::aider::load_sessions(&project_path, exclude),
+        "antigravity" => providers::antigravity::load_sessions(&project_path, exclude),
         _ => Err(format!("Unknown provider: {provider}")),
     }
 }
@@ -248,10 +272,12 @@ pub async fn load_provider_messages(
         }
         "codex" => providers::codex::load_messages(&session_path)?,
         "gemini" => providers::gemini::load_messages(&session_path)?,
+        "forgecode" => providers::forgecode::load_messages(&session_path)?,
         "opencode" => providers::opencode::load_messages(&session_path)?,
         "cline" => providers::cline::load_messages(&session_path)?,
         "cursor" => providers::cursor::load_messages(&session_path)?,
         "aider" => providers::aider::load_messages(&session_path)?,
+        "antigravity" => providers::antigravity::load_messages(&session_path)?,
         _ => return Err(format!("Unknown provider: {provider}")),
     };
 
@@ -281,10 +307,12 @@ pub async fn search_all_providers(
             "claude".to_string(),
             "codex".to_string(),
             "gemini".to_string(),
+            "forgecode".to_string(),
             "opencode".to_string(),
             "cline".to_string(),
             "cursor".to_string(),
             "aider".to_string(),
+            "antigravity".to_string(),
         ]
     });
 
@@ -367,6 +395,16 @@ pub async fn search_all_providers(
         }
     }
 
+    // ForgeCode
+    if providers_to_search.iter().any(|p| p == "forgecode") {
+        match providers::forgecode::search(&query, max_results) {
+            Ok(results) => all_results.extend(results),
+            Err(e) => {
+                log::warn!("ForgeCode search failed: {e}");
+            }
+        }
+    }
+
     // OpenCode
     if providers_to_search.iter().any(|p| p == "opencode") {
         match providers::opencode::search(&query, max_results) {
@@ -403,6 +441,16 @@ pub async fn search_all_providers(
             Ok(results) => all_results.extend(results),
             Err(e) => {
                 log::warn!("Aider search failed: {e}");
+            }
+        }
+    }
+
+    // Antigravity
+    if providers_to_search.iter().any(|p| p == "antigravity") {
+        match providers::antigravity::search(&query, max_results) {
+            Ok(results) => all_results.extend(results),
+            Err(e) => {
+                log::warn!("Antigravity search failed: {e}");
             }
         }
     }
@@ -480,6 +528,7 @@ fn resolve_active_wsl_distros(
     result
 }
 
+/// Merge adjacent tool execution messages into display-friendly message groups.
 fn merge_tool_execution_messages(messages: Vec<ClaudeMessage>) -> Vec<ClaudeMessage> {
     let mut merged: Vec<ClaudeMessage> = Vec::with_capacity(messages.len());
 
@@ -538,6 +587,7 @@ fn merge_tool_execution_messages(messages: Vec<ClaudeMessage>) -> Vec<ClaudeMess
     merged
 }
 
+/// Return whether two messages belong to the same tool execution.
 fn has_matching_tool_use(msg: &ClaudeMessage, tool_use_id: &str) -> bool {
     if msg.message_type != "assistant" {
         return false;
@@ -552,6 +602,7 @@ fn has_matching_tool_use(msg: &ClaudeMessage, tool_use_id: &str) -> bool {
     })
 }
 
+/// Append a content block to a message content array.
 fn append_content_block(msg: &mut ClaudeMessage, block: Value) {
     match &mut msg.content {
         Some(Value::Array(arr)) => arr.push(block),
@@ -563,6 +614,7 @@ fn append_content_block(msg: &mut ClaudeMessage, block: Value) {
 mod tests {
     use super::*;
 
+    /// Create a normalized message value for merged tool output.
     fn make_message(message_type: &str, content: Value) -> ClaudeMessage {
         ClaudeMessage {
             uuid: format!("{message_type}-id"),
@@ -601,6 +653,7 @@ mod tests {
     }
 
     #[test]
+    /// Merge a tool result message into the previous tool-use message when possible.
     fn merge_tool_result_into_previous_tool_use_message() {
         let tool_use = make_message(
             "assistant",
@@ -635,6 +688,7 @@ mod tests {
     }
 
     #[test]
+    /// Split and merge multiple tool results from a single provider message.
     fn merge_multiple_tool_results_from_single_message() {
         let tool_use = make_message(
             "assistant",
@@ -680,6 +734,7 @@ mod tests {
     }
 
     #[test]
+    /// Verify partial merging preserves unmerged and non-tool content.
     fn partial_merge_preserves_unmerged_and_non_tool_content() {
         let tool_use = make_message(
             "assistant",

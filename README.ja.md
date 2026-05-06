@@ -6,7 +6,7 @@
 
 **AIコーディングアシスタントのための統合履歴ビューア。**
 
-**Claude Code**、**Gemini CLI**、**Codex CLI**、**Cline**、**Cursor**、**Aider**、**OpenCode**の会話履歴を閲覧・検索・分析 — デスクトップアプリまたはヘッドレスサーバーとして。100%オフライン。
+**Claude Code**、**Gemini CLI**、**Antigravity**、**Codex CLI**、**Cline**、**Cursor**、**Aider**、**OpenCode**、**ForgeCode**の会話履歴を閲覧・検索・分析 — デスクトップアプリまたはヘッドレスサーバーとして。100%オフライン。
 
 [![Version](https://img.shields.io/github/v/release/jhlee0409/claude-code-history-viewer?label=Version&color=blue)](https://github.com/jhlee0409/claude-code-history-viewer/releases)
 [![Stars](https://img.shields.io/github/stars/jhlee0409/claude-code-history-viewer?style=flat&color=yellow)](https://github.com/jhlee0409/claude-code-history-viewer/stargazers)
@@ -63,17 +63,19 @@ Docker、VPS、systemdのセットアップは[サーバーモード](#サーバ
 
 AIコーディングアシスタントは数千もの会話メッセージを生成しますが、ツール間で履歴を振り返る方法を提供していません。CCHVがこの課題を解決します。
 
-**7つのアシスタント。1つのビューア。** Claude Code、Gemini CLI、Codex CLI、Cline、Cursor、Aider、OpenCodeのセッションをシームレスに切り替え — トークン使用量を比較し、プロバイダー間で検索し、ワークフローを1つのインターフェースで分析。
+**9つのアシスタント。1つのビューア。** Claude Code、Gemini CLI、Antigravity、Codex CLI、Cline、Cursor、Aider、OpenCode、ForgeCodeのセッションをシームレスに切り替え — トークン使用量を比較し、プロバイダー間で検索し、ワークフローを1つのインターフェースで分析。
 
 | プロバイダー | データの場所 | 取得できる情報 |
 |----------|--------------|--------------|
 | **Claude Code** | `~/.claude/projects/` | 完全な会話履歴、ツール使用、思考プロセス、コスト |
 | **Gemini CLI** | `~/.gemini/history/` | ツール呼び出しを含む会話履歴 |
+| **Antigravity** | `~/.gemini/antigravity/.token-monitor/rpc-cache/v1/` | トークンモニターのセッション、usage スナップショット、分析向け統計 |
 | **Codex CLI** | `~/.codex/sessions/` | エージェント応答を含むセッションロールアウト |
 | **Cline** | `~/.cline/tasks/` | タスクベースの会話履歴 |
 | **Cursor** | `~/.cursor/` | Composerとチャットの会話 |
 | **Aider** | プロジェクトディレクトリ | チャット履歴と編集ログ |
 | **OpenCode** | `~/.local/share/opencode/` | 会話セッションとツール結果 |
+| **ForgeCode** | `~/.forge/.forge.db` | SQLiteデータベースの会話履歴 |
 
 ベンダーロックインなし。クラウド依存なし。ローカルの会話ファイルを美しくレンダリング。
 
@@ -97,7 +99,7 @@ AIコーディングアシスタントは数千もの会話メッセージを生
 
 | 機能 | 説明 |
 |---------|-------------|
-| **マルチプロバイダー** | **Claude Code**、**Gemini CLI**、**Codex CLI**、**Cline**、**Cursor**、**Aider**、**OpenCode**の会話を統合ビューアで閲覧 — プロバイダー別フィルタリング、ツール間比較 |
+| **マルチプロバイダー** | **Claude Code**、**Gemini CLI**、**Antigravity**、**Codex CLI**、**Cline**、**Cursor**、**Aider**、**OpenCode**、**ForgeCode**の会話を統合ビューアで閲覧 — プロバイダー別フィルタリング、ツール間比較 |
 | **会話ブラウザ** | プロジェクト/セッション別に会話を閲覧（ワークツリーグループ化対応） |
 | **グローバル検索** | 全プロバイダーの会話を瞬時に検索 |
 | **分析ダッシュボード** | デュアルモードトークン統計（課金 vs 会話）、コスト内訳、プロバイダー分布チャート |
@@ -105,6 +107,12 @@ AIコーディングアシスタントは数千もの会話メッセージを生
 | **設定マネージャー** | スコープ対応のClaude Code設定エディタ（MCPサーバー管理付き） |
 | **メッセージナビゲーター** | 右側折りたたみ式TOCで会話を素早くナビゲーション |
 | **リアルタイム監視** | セッションファイルのライブ監視で即座に更新 |
+
+### プロバイダーメモ
+
+| プロバイダー | メモ |
+|---------|-------|
+| **Antigravity** | 既存の標準プロバイダーパイプラインで読み込まれます。セッションは token monitor のキャッシュから取得され、専用 UI モードを増やさずに、プロジェクト/セッション表示、トークン統計、分析、グローバル検索に参加します。 |
 
 ### v1.10.0の新機能
 
@@ -320,10 +328,27 @@ GET /health
 ## 使い方
 
 1. アプリを起動
-2. 対応する全プロバイダー（Claude Code、Gemini CLI、Codex CLI、Cline、Cursor、Aider、OpenCode）から会話データを自動スキャン
+2. 対応する全プロバイダー（Claude Code、Gemini CLI、Codex CLI、Cline、Cursor、Aider、OpenCode、ForgeCode）から会話データを自動スキャン
 3. 左サイドバーでプロジェクトを閲覧 — タブバーでプロバイダー別フィルタリング
 4. セッションをクリックしてメッセージを確認
 5. タブでメッセージ、分析、トークン統計、最近の編集、セッションボードを切り替え
+
+### コマンドラインフラグ
+
+`--session` フラグで特定のセッションを事前選択した状態でアプリを起動できます。
+
+```bash
+# 完全な UUID
+claude-code-history-viewer --session 1265cd74-caa9-472e-b343-c4f44b5cf12c
+
+# UUID プレフィックス（hex またはダッシュで構成される 8〜36 文字）— 最初に一致したセッションを選択
+claude-code-history-viewer --session 1265cd74
+
+# equals 形式も使用可能
+claude-code-history-viewer --session=1265cd74
+```
+
+アプリは既知のすべてのプロジェクトをスキャンして一致するセッションに移動します。一致するものがなければ通常起動に戻ります。hex-またはダッシュの 8〜36 文字でも絶対パスでもない値は黙って無視されます。
 
 ## アクセシビリティ
 
