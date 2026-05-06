@@ -116,7 +116,17 @@ Antigravity note: the viewer resolves the Antigravity root as `~/.gemini/antigra
 |---------|-------|
 | **Antigravity** | Loaded through the standard provider pipeline. Sessions come from the token monitor cache and participate in project/session views, token stats, analytics, and global search without a separate UI mode. |
 
-### New in v1.10.0
+### New in v1.12.0
+
+| Feature | Description |
+|---------|-------------|
+| **Two New Providers** | Added **Antigravity** and **ForgeCode** — now supports 9 AI coding assistants |
+| **External Session Launch** | New `--session <uuid>` CLI flag with single-instance enforcement and macOS Apple Events for re-invocation |
+| **Sub-agent Filter** | Toggle sub-agent messages on/off from the header dropdown |
+| **Context Menu Polish** | Right-click menus rendered in portal for cursor-precise anchoring; clamp to panel bounds; close on scroll |
+| **Custom Directory** | Custom Claude directory selection now applies instantly without restart |
+
+### v1.10.0
 
 | Feature | Description |
 |---------|-------------|
