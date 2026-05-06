@@ -13,7 +13,7 @@ use rayon::prelude::*;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -22,6 +22,7 @@ enum StatsProvider {
     Claude,
     Codex,
     OpenCode,
+    Antigravity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +53,7 @@ fn stats_provider_id(provider: StatsProvider) -> &'static str {
         StatsProvider::Claude => "claude",
         StatsProvider::Codex => "codex",
         StatsProvider::OpenCode => "opencode",
+        StatsProvider::Antigravity => "antigravity",
     }
 }
 
@@ -92,6 +94,58 @@ fn token_usage_totals(usage: &TokenUsage) -> (u64, u64, u64, u64, u64) {
     )
 }
 
+#[derive(Debug, Clone)]
+struct AntigravityUsageRecord {
+    timestamp: DateTime<Utc>,
+    model: String,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_creation_tokens: u64,
+    cache_read_tokens: u64,
+    conversation_input_tokens: u64,
+    conversation_cache_creation_tokens: u64,
+    conversation_cache_read_tokens: u64,
+    reasoning_tokens: u64,
+    total_tokens: u64,
+}
+
+fn scale_token_count(value: u64, numerator: u64, denominator: u64) -> u64 {
+    if value == 0 || numerator == 0 || denominator == 0 {
+        return 0;
+    }
+
+    let scaled = (u128::from(value) * u128::from(numerator)) + (u128::from(denominator) / 2);
+    (scaled / u128::from(denominator)) as u64
+}
+
+fn antigravity_chat_token_breakdown(value: &serde_json::Value) -> Option<(u64, u64)> {
+    let token_breakdown =
+        &value["raw"]["chatModel"]["chatStartMetadata"]["contextWindowMetadata"]["tokenBreakdown"];
+    let total_tokens = token_breakdown["totalTokens"].as_u64().or_else(|| {
+        value["raw"]["chatModel"]["chatStartMetadata"]["contextWindowMetadata"]
+            ["estimatedTokensUsed"]
+            .as_u64()
+    })?;
+
+    if total_tokens == 0 {
+        return None;
+    }
+
+    let chat_tokens = token_breakdown["groups"]
+        .as_array()
+        .map(|groups| {
+            groups
+                .iter()
+                .filter(|group| group["type"].as_str() == Some("TOKEN_TYPE_CHAT_MESSAGES"))
+                .map(|group| group["numTokens"].as_u64().unwrap_or(0))
+                .sum::<u64>()
+        })
+        .unwrap_or(0)
+        .min(total_tokens);
+
+    Some((chat_tokens, total_tokens))
+}
+
 fn should_include_stats_entry(
     message_type: &str,
     is_sidechain: Option<bool>,
@@ -121,11 +175,28 @@ fn should_include_stats_entry(
     has_usage
 }
 
+fn is_synthetic_antigravity_prompt(message: &ClaudeMessage) -> bool {
+    message.provider.as_deref() == Some("antigravity")
+        && message.message_type == "user"
+        && message.usage.is_none()
+}
+
+fn should_include_stats_message(message: &ClaudeMessage, mode: StatsMode) -> bool {
+    if is_synthetic_antigravity_prompt(message) {
+        return false;
+    }
+
+    let usage = extract_token_usage(message);
+    let has_usage = token_usage_has_token_fields(&usage);
+    should_include_stats_entry(&message.message_type, message.is_sidechain, has_usage, mode)
+}
+
 fn all_stats_providers() -> HashSet<StatsProvider> {
     [
         StatsProvider::Claude,
         StatsProvider::Codex,
         StatsProvider::OpenCode,
+        StatsProvider::Antigravity,
     ]
     .into_iter()
     .collect()
@@ -143,6 +214,7 @@ fn parse_active_stats_providers(active_providers: Option<Vec<String>>) -> HashSe
             "claude" => Some(StatsProvider::Claude),
             "codex" => Some(StatsProvider::Codex),
             "opencode" => Some(StatsProvider::OpenCode),
+            "antigravity" => Some(StatsProvider::Antigravity),
             _ => {
                 unknown.push(provider);
                 None
@@ -165,6 +237,8 @@ fn detect_project_provider(project_path: &str) -> StatsProvider {
         StatsProvider::Codex
     } else if project_path.starts_with("opencode://") {
         StatsProvider::OpenCode
+    } else if is_antigravity_path(project_path) {
+        StatsProvider::Antigravity
     } else {
         StatsProvider::Claude
     }
@@ -173,6 +247,10 @@ fn detect_project_provider(project_path: &str) -> StatsProvider {
 fn detect_session_provider(session_path: &str) -> StatsProvider {
     if session_path.starts_with("opencode://") {
         return StatsProvider::OpenCode;
+    }
+
+    if is_antigravity_path(session_path) {
+        return StatsProvider::Antigravity;
     }
 
     let is_rollout = PathBuf::from(session_path)
@@ -190,6 +268,12 @@ fn detect_session_provider(session_path: &str) -> StatsProvider {
     } else {
         StatsProvider::Claude
     }
+}
+
+fn is_antigravity_path(path: &str) -> bool {
+    crate::commands::antigravity::resolve_antigravity_root()
+        .map(|root| Path::new(path).starts_with(root.as_path()))
+        .unwrap_or(false)
 }
 
 /// Parse a line using simd-json (requires mutable slice)
@@ -385,6 +469,8 @@ fn track_tool_usage_from_global_entry(
 }
 
 /// Intermediate stats collected from a single session file (for parallel processing)
+type ModelUsageAggregate = (u32, u64, u64, u64, u64, u64, u64);
+
 #[derive(Default)]
 struct SessionFileStats {
     total_messages: u32,
@@ -393,7 +479,7 @@ struct SessionFileStats {
     tool_usage: HashMap<String, (u32, u32)>, // (usage_count, success_count)
     daily_stats: HashMap<String, DailyStats>,
     activity_data: HashMap<(u8, u8), (u32, u64)>, // (hour, day) -> (count, tokens)
-    model_usage: HashMap<String, (u32, u64, u64, u64, u64, u64)>, // model -> (msg_count, total, input, output, cache_create, cache_read)
+    model_usage: HashMap<String, ModelUsageAggregate>, // model -> (msg_count, total, input, output, cache_create, cache_read, reasoning)
     session_duration_minutes: u64,
     first_message: Option<DateTime<Utc>>,
     last_message: Option<DateTime<Utc>>,
@@ -479,13 +565,14 @@ fn process_session_file_for_global_stats(
                 let model_entry = stats
                     .model_usage
                     .entry(model_name.clone())
-                    .or_insert((0, 0, 0, 0, 0, 0));
+                    .or_insert((0, 0, 0, 0, 0, 0, 0));
                 model_entry.0 += 1;
                 model_entry.1 += tokens;
                 model_entry.2 += input_tokens;
                 model_entry.3 += output_tokens;
                 model_entry.4 += cache_creation_tokens;
                 model_entry.5 += cache_read_tokens;
+                model_entry.6 += 0;
             }
         }
 
@@ -601,12 +688,11 @@ fn build_global_session_file_stats_from_messages(
     let has_date_filter = s_limit.is_some() || e_limit.is_some();
 
     for message in messages {
-        let usage = extract_token_usage(message);
-        let has_usage = token_usage_has_token_fields(&usage);
-        if !should_include_stats_entry(&message.message_type, message.is_sidechain, has_usage, mode)
-        {
+        if !should_include_stats_message(message, mode) {
             continue;
         }
+
+        let usage = extract_token_usage(message);
 
         // Date-range filtering: parse timestamp early and skip messages outside the window.
         let parsed_timestamp = parse_timestamp_utc(&message.timestamp);
@@ -627,13 +713,14 @@ fn build_global_session_file_stats_from_messages(
             let model_entry = stats
                 .model_usage
                 .entry(model_name.clone())
-                .or_insert((0, 0, 0, 0, 0, 0));
+                .or_insert((0, 0, 0, 0, 0, 0, 0));
             model_entry.0 += 1;
             model_entry.1 += tokens;
             model_entry.2 += input_tokens;
             model_entry.3 += output_tokens;
             model_entry.4 += cache_creation_tokens;
             model_entry.5 += cache_read_tokens;
+            model_entry.6 += 0;
         }
 
         if let Some(timestamp) = parsed_timestamp {
@@ -714,15 +801,146 @@ fn collect_provider_global_file_stats(
 ) -> (Vec<SessionFileStats>, HashSet<String>) {
     let mut project_keys = HashSet::new();
 
+    if provider == StatsProvider::Antigravity {
+        let Ok(root) = crate::commands::antigravity::get_antigravity_root()
+            .ok_or_else(|| "Cannot determine antigravity root directory".to_string())
+        else {
+            return (Vec::new(), project_keys);
+        };
+        let Ok(sessions) = providers::antigravity::load_sessions(&root.to_string_lossy(), false)
+        else {
+            return (Vec::new(), project_keys);
+        };
+        project_keys.insert(format!(
+            "{}:{}",
+            stats_provider_id(provider),
+            "Antigravity [antigravity]"
+        ));
+
+        let mut all_stats = Vec::new();
+        for session in &sessions {
+            let records = match load_antigravity_usage_records(&session.file_path) {
+                Ok(records) => records
+                    .into_iter()
+                    .filter(|record| {
+                        is_within_date_limits(Some(record.timestamp), s_limit, e_limit)
+                    })
+                    .collect::<Vec<_>>(),
+                Err(_) => continue,
+            };
+            if records.is_empty() {
+                continue;
+            }
+
+            let mut stats = SessionFileStats {
+                project_name: "Antigravity [antigravity]".to_string(),
+                provider,
+                ..Default::default()
+            };
+            if let Ok(messages) = providers::antigravity::load_messages(&session.file_path) {
+                for message in &messages {
+                    track_tool_usage(message, &mut stats.tool_usage);
+                }
+            }
+            let mut timestamps = Vec::new();
+            for record in records {
+                let input_tokens = match mode {
+                    StatsMode::BillingTotal => record.input_tokens,
+                    StatsMode::ConversationOnly => record.conversation_input_tokens,
+                };
+                let cache_creation_tokens = match mode {
+                    StatsMode::BillingTotal => record.cache_creation_tokens,
+                    StatsMode::ConversationOnly => record.conversation_cache_creation_tokens,
+                };
+                let cache_read_tokens = match mode {
+                    StatsMode::BillingTotal => record.cache_read_tokens,
+                    StatsMode::ConversationOnly => record.conversation_cache_read_tokens,
+                };
+                let total_tokens = match mode {
+                    StatsMode::BillingTotal => record.total_tokens,
+                    StatsMode::ConversationOnly => {
+                        input_tokens
+                            + record.output_tokens
+                            + cache_creation_tokens
+                            + cache_read_tokens
+                            + record.reasoning_tokens
+                    }
+                };
+
+                stats.total_messages += 1;
+                stats.total_tokens += total_tokens;
+                stats.token_distribution.input += input_tokens;
+                stats.token_distribution.output += record.output_tokens;
+                stats.token_distribution.cache_creation += cache_creation_tokens;
+                stats.token_distribution.cache_read += cache_read_tokens;
+                stats.token_distribution.reasoning += record.reasoning_tokens;
+
+                let model_entry = stats
+                    .model_usage
+                    .entry(record.model.clone())
+                    .or_insert((0, 0, 0, 0, 0, 0, 0));
+                model_entry.0 += 1;
+                model_entry.1 += total_tokens;
+                model_entry.2 += input_tokens;
+                model_entry.3 += record.output_tokens;
+                model_entry.4 += cache_creation_tokens;
+                model_entry.5 += cache_read_tokens;
+                model_entry.6 += record.reasoning_tokens;
+
+                let date = record.timestamp.format("%Y-%m-%d").to_string();
+                let daily_entry =
+                    stats
+                        .daily_stats
+                        .entry(date.clone())
+                        .or_insert_with(|| DailyStats {
+                            date,
+                            ..Default::default()
+                        });
+                daily_entry.total_tokens += total_tokens;
+                daily_entry.input_tokens += input_tokens;
+                daily_entry.output_tokens += record.output_tokens;
+                daily_entry.message_count += 1;
+
+                let hour = record.timestamp.hour() as u8;
+                let day = record.timestamp.weekday().num_days_from_sunday() as u8;
+                let activity_entry = stats.activity_data.entry((hour, day)).or_insert((0, 0));
+                activity_entry.0 += 1;
+                activity_entry.1 += total_tokens;
+
+                timestamps.push(record.timestamp);
+                if stats
+                    .first_message
+                    .map_or(true, |current| record.timestamp < current)
+                {
+                    stats.first_message = Some(record.timestamp);
+                }
+                if stats
+                    .last_message
+                    .map_or(true, |current| record.timestamp > current)
+                {
+                    stats.last_message = Some(record.timestamp);
+                }
+            }
+
+            stats.session_duration_minutes =
+                u64::from(calculate_session_active_minutes(&mut timestamps));
+            all_stats.push(stats);
+        }
+
+        return (all_stats, project_keys);
+    }
+
     let projects = match provider {
         StatsProvider::Codex => providers::codex::scan_projects().unwrap_or_default(),
         StatsProvider::OpenCode => providers::opencode::scan_projects().unwrap_or_default(),
+        StatsProvider::Antigravity => providers::antigravity::scan_projects().unwrap_or_default(),
         StatsProvider::Claude => Vec::new(),
     };
 
     let provider_tag = match provider {
         StatsProvider::Codex => "codex",
         StatsProvider::OpenCode => "opencode",
+        StatsProvider::Antigravity => "antigravity",
         StatsProvider::Claude => "claude",
     };
 
@@ -736,6 +954,9 @@ fn collect_provider_global_file_stats(
         let sessions = match provider {
             StatsProvider::Codex => providers::codex::load_sessions(&project.path, false),
             StatsProvider::OpenCode => providers::opencode::load_sessions(&project.path, false),
+            StatsProvider::Antigravity => {
+                providers::antigravity::load_sessions(&project.path, false)
+            }
             StatsProvider::Claude => Ok(Vec::new()),
         }
         .unwrap_or_default();
@@ -752,6 +973,7 @@ fn collect_provider_global_file_stats(
             let messages = match provider {
                 StatsProvider::Codex => providers::codex::load_messages(file_path),
                 StatsProvider::OpenCode => providers::opencode::load_messages(file_path),
+                StatsProvider::Antigravity => providers::antigravity::load_messages(file_path),
                 StatsProvider::Claude => Ok(Vec::new()),
             }
             .unwrap_or_default();
@@ -1118,6 +1340,152 @@ fn calculate_session_active_minutes(timestamps: &mut [DateTime<Utc>]) -> u32 {
     session_total_minutes + final_period.max(1) as u32
 }
 
+fn load_antigravity_usage_records(
+    session_path: &str,
+) -> Result<Vec<AntigravityUsageRecord>, String> {
+    let usage_path = PathBuf::from(session_path).join("usage.jsonl");
+    if !usage_path.exists() {
+        return Ok(vec![]);
+    }
+
+    let content = fs::read_to_string(&usage_path)
+        .map_err(|e| format!("Failed to read {}: {}", usage_path.display(), e))?;
+    let mut records = Vec::new();
+
+    for line in content.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value["recordType"].as_str() != Some("usage") {
+            continue;
+        }
+
+        let Some(created_at) = value["raw"]["chatModel"]["chatStartMetadata"]["createdAt"].as_str()
+        else {
+            continue;
+        };
+        let Some(timestamp) = parse_timestamp_utc(created_at) else {
+            continue;
+        };
+
+        let input_tokens = value["inputTokens"].as_u64().unwrap_or(0);
+        let output_tokens = value["outputTokens"].as_u64().unwrap_or(0);
+        let cache_read_tokens = value["cacheReadTokens"].as_u64().unwrap_or(0);
+        let cache_creation_tokens = value["cacheWriteTokens"].as_u64().unwrap_or(0);
+        let reasoning_tokens = value["reasoningTokens"].as_u64().unwrap_or(0);
+        let total_tokens = value["totalTokens"].as_u64().unwrap_or(0).max(
+            input_tokens
+                + output_tokens
+                + cache_read_tokens
+                + cache_creation_tokens
+                + reasoning_tokens,
+        );
+        let (
+            conversation_input_tokens,
+            conversation_cache_creation_tokens,
+            conversation_cache_read_tokens,
+        ) = antigravity_chat_token_breakdown(&value)
+            .map(|(chat_tokens, total_context_tokens)| {
+                (
+                    scale_token_count(input_tokens, chat_tokens, total_context_tokens),
+                    scale_token_count(cache_creation_tokens, chat_tokens, total_context_tokens),
+                    scale_token_count(cache_read_tokens, chat_tokens, total_context_tokens),
+                )
+            })
+            .unwrap_or((input_tokens, cache_creation_tokens, cache_read_tokens));
+
+        records.push(AntigravityUsageRecord {
+            timestamp,
+            model: value["model"].as_str().unwrap_or("unknown").to_string(),
+            input_tokens,
+            output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+            conversation_input_tokens,
+            conversation_cache_creation_tokens,
+            conversation_cache_read_tokens,
+            reasoning_tokens,
+            total_tokens,
+        });
+    }
+
+    Ok(records)
+}
+
+fn build_antigravity_session_token_stats(
+    session: &crate::models::ClaudeSession,
+    mode: StatsMode,
+    s_limit: Option<&DateTime<Utc>>,
+    e_limit: Option<&DateTime<Utc>>,
+) -> Result<Option<(SessionTokenStats, Vec<AntigravityUsageRecord>)>, String> {
+    let mut records = load_antigravity_usage_records(&session.file_path)?;
+    records.retain(|record| is_within_date_limits(Some(record.timestamp), s_limit, e_limit));
+    if records.is_empty() {
+        return Ok(None);
+    }
+
+    let first_message_time = records
+        .iter()
+        .map(|record| record.timestamp)
+        .min()
+        .map(|ts| ts.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
+    let last_message_time = records
+        .iter()
+        .map(|record| record.timestamp)
+        .max()
+        .map(|ts| ts.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
+
+    let stats = SessionTokenStats {
+        session_id: session.actual_session_id.clone(),
+        project_name: session.project_name.clone(),
+        total_input_tokens: records
+            .iter()
+            .map(|record| match mode {
+                StatsMode::BillingTotal => record.input_tokens,
+                StatsMode::ConversationOnly => record.conversation_input_tokens,
+            })
+            .sum(),
+        total_output_tokens: records.iter().map(|record| record.output_tokens).sum(),
+        total_cache_creation_tokens: records
+            .iter()
+            .map(|record| match mode {
+                StatsMode::BillingTotal => record.cache_creation_tokens,
+                StatsMode::ConversationOnly => record.conversation_cache_creation_tokens,
+            })
+            .sum(),
+        total_cache_read_tokens: records
+            .iter()
+            .map(|record| match mode {
+                StatsMode::BillingTotal => record.cache_read_tokens,
+                StatsMode::ConversationOnly => record.conversation_cache_read_tokens,
+            })
+            .sum(),
+        total_reasoning_tokens: records.iter().map(|record| record.reasoning_tokens).sum(),
+        total_tokens: records
+            .iter()
+            .map(|record| match mode {
+                StatsMode::BillingTotal => record.total_tokens,
+                StatsMode::ConversationOnly => {
+                    record.conversation_input_tokens
+                        + record.output_tokens
+                        + record.conversation_cache_creation_tokens
+                        + record.conversation_cache_read_tokens
+                        + record.reasoning_tokens
+                }
+            })
+            .sum(),
+        message_count: records.len(),
+        first_message_time,
+        last_message_time,
+        summary: session.summary.clone(),
+        most_used_tools: Vec::new(),
+    };
+
+    Ok(Some((stats, records)))
+}
+
 fn build_tool_usage_stats(tool_usage: HashMap<String, (u32, u32)>) -> Vec<ToolUsageStats> {
     let mut tools = tool_usage
         .into_iter()
@@ -1165,6 +1533,14 @@ fn resolve_provider_project_name(provider: StatsProvider, project_path: &str) ->
                 .unwrap_or(project_path)
                 .to_string()
         }
+        StatsProvider::Antigravity => {
+            if let Ok(projects) = providers::antigravity::scan_projects() {
+                if let Some(project) = projects.into_iter().find(|p| p.path == project_path) {
+                    return project.name;
+                }
+            }
+            "Antigravity".to_string()
+        }
     }
 }
 
@@ -1193,6 +1569,7 @@ fn resolve_provider_project_name_from_session(
             }
             "codex".to_string()
         }
+        StatsProvider::Antigravity => "Antigravity".to_string(),
         StatsProvider::Claude => "unknown".to_string(),
     }
 }
@@ -1204,6 +1581,7 @@ fn load_provider_sessions_for_stats(
     match provider {
         StatsProvider::Codex => providers::codex::load_sessions(project_path, false),
         StatsProvider::OpenCode => providers::opencode::load_sessions(project_path, false),
+        StatsProvider::Antigravity => providers::antigravity::load_sessions(project_path, false),
         StatsProvider::Claude => {
             Err("Claude sessions are handled by legacy stats path".to_string())
         }
@@ -1217,6 +1595,7 @@ fn load_provider_messages_for_stats(
     match provider {
         StatsProvider::Codex => providers::codex::load_messages(&session.file_path),
         StatsProvider::OpenCode => providers::opencode::load_messages(&session.file_path),
+        StatsProvider::Antigravity => providers::antigravity::load_messages(&session.file_path),
         StatsProvider::Claude => {
             Err("Claude messages are handled by legacy stats path".to_string())
         }
@@ -1256,13 +1635,11 @@ fn build_session_token_stats_from_messages(
             continue;
         }
 
-        let usage = extract_token_usage(message);
-        let has_usage = token_usage_has_token_fields(&usage);
-        if !should_include_stats_entry(&message.message_type, message.is_sidechain, has_usage, mode)
-        {
+        if !should_include_stats_message(message, mode) {
             continue;
         }
 
+        let usage = extract_token_usage(message);
         included_message_count += 1;
         let (input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, _) =
             dedup_token_totals_msg(&mut seen_usage_keys, message, &usage);
@@ -1300,6 +1677,7 @@ fn build_session_token_stats_from_messages(
         total_output_tokens,
         total_cache_creation_tokens,
         total_cache_read_tokens,
+        total_reasoning_tokens: 0,
         total_tokens,
         message_count: included_message_count,
         first_message_time: first_time_raw.unwrap_or_else(|| "unknown".to_string()),
@@ -1318,6 +1696,41 @@ fn get_provider_project_token_stats(
     end_date: Option<String>,
     mode: StatsMode,
 ) -> Result<PaginatedTokenStats, String> {
+    if provider == StatsProvider::Antigravity {
+        let sessions = load_provider_sessions_for_stats(provider, project_path)?;
+        let s_limit = parse_date_limit(start_date, "start_date");
+        let e_limit = parse_date_limit(end_date, "end_date");
+        let mut all_stats = Vec::new();
+
+        for session in &sessions {
+            if let Some((stats, _records)) = build_antigravity_session_token_stats(
+                session,
+                mode,
+                s_limit.as_ref(),
+                e_limit.as_ref(),
+            )? {
+                all_stats.push(stats);
+            }
+        }
+
+        let total_count = all_stats.len();
+        all_stats.sort_by_key(|s| std::cmp::Reverse(s.total_tokens));
+        let items = all_stats
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect::<Vec<_>>();
+        let has_more = offset + items.len() < total_count;
+
+        return Ok(PaginatedTokenStats {
+            items,
+            total_count,
+            offset,
+            limit,
+            has_more,
+        });
+    }
+
     let project_name = resolve_provider_project_name(provider, project_path);
     let mut all_stats = Vec::new();
     let sessions = load_provider_sessions_for_stats(provider, project_path)?;
@@ -1368,6 +1781,147 @@ fn get_provider_project_stats_summary(
     end_date: Option<String>,
     mode: StatsMode,
 ) -> Result<ProjectStatsSummary, String> {
+    if provider == StatsProvider::Antigravity {
+        let sessions = load_provider_sessions_for_stats(provider, project_path)?;
+        let s_limit = parse_date_limit(start_date, "start_date");
+        let e_limit = parse_date_limit(end_date, "end_date");
+
+        let mut summary = ProjectStatsSummary::default();
+        summary.project_name = resolve_provider_project_name(provider, project_path);
+
+        let mut session_durations = Vec::new();
+        let mut tool_usage_map: HashMap<String, (u32, u32)> = HashMap::new();
+        let mut daily_stats_map: HashMap<String, DailyStats> = HashMap::new();
+        let mut activity_map: HashMap<(u8, u8), (u32, u64)> = HashMap::new();
+
+        for session in &sessions {
+            let Some((session_stats, records)) = build_antigravity_session_token_stats(
+                session,
+                mode,
+                s_limit.as_ref(),
+                e_limit.as_ref(),
+            )?
+            else {
+                continue;
+            };
+
+            summary.total_sessions += 1;
+            summary.total_messages += session_stats.message_count;
+            summary.total_tokens += session_stats.total_tokens;
+            summary.token_distribution.input += session_stats.total_input_tokens;
+            summary.token_distribution.output += session_stats.total_output_tokens;
+            summary.token_distribution.cache_creation += session_stats.total_cache_creation_tokens;
+            summary.token_distribution.cache_read += session_stats.total_cache_read_tokens;
+            summary.token_distribution.reasoning += session_stats.total_reasoning_tokens;
+
+            if let Ok(messages) = providers::antigravity::load_messages(&session.file_path) {
+                for message in &messages {
+                    track_tool_usage(message, &mut tool_usage_map);
+                }
+            }
+
+            let mut timestamps = records
+                .iter()
+                .map(|record| record.timestamp)
+                .collect::<Vec<_>>();
+            let duration = calculate_session_active_minutes(&mut timestamps);
+            if duration > 0 {
+                session_durations.push(duration);
+            }
+
+            let mut session_dates = HashSet::new();
+            for record in records {
+                let (mode_input_tokens, mode_output_tokens, mode_total_tokens) = match mode {
+                    StatsMode::ConversationOnly => {
+                        let input_tokens = record.conversation_input_tokens;
+                        let output_tokens = record.output_tokens;
+                        let total_tokens = input_tokens
+                            + output_tokens
+                            + record.conversation_cache_creation_tokens
+                            + record.conversation_cache_read_tokens
+                            + record.reasoning_tokens;
+                        (input_tokens, output_tokens, total_tokens)
+                    }
+                    StatsMode::BillingTotal => (
+                        record.input_tokens,
+                        record.output_tokens,
+                        record.total_tokens,
+                    ),
+                };
+                let hour = record.timestamp.hour() as u8;
+                let day = record.timestamp.weekday().num_days_from_sunday() as u8;
+                let date = record.timestamp.format("%Y-%m-%d").to_string();
+                session_dates.insert(date.clone());
+
+                let activity_entry = activity_map.entry((hour, day)).or_insert((0, 0));
+                activity_entry.0 += 1;
+                activity_entry.1 += mode_total_tokens;
+
+                let daily_entry =
+                    daily_stats_map
+                        .entry(date.clone())
+                        .or_insert_with(|| DailyStats {
+                            date,
+                            ..Default::default()
+                        });
+                daily_entry.total_tokens += mode_total_tokens;
+                daily_entry.input_tokens += mode_input_tokens;
+                daily_entry.output_tokens += mode_output_tokens;
+                daily_entry.message_count += 1;
+            }
+
+            for date in session_dates {
+                let entry = daily_stats_map
+                    .entry(date.clone())
+                    .or_insert_with(|| DailyStats {
+                        date,
+                        ..Default::default()
+                    });
+                entry.session_count += 1;
+            }
+        }
+
+        for daily_stat in daily_stats_map.values_mut() {
+            daily_stat.active_hours = if daily_stat.message_count > 0 {
+                std::cmp::min(24, std::cmp::max(1, daily_stat.message_count / 10))
+            } else {
+                0
+            };
+        }
+
+        summary.daily_stats = daily_stats_map.into_values().collect();
+        summary.daily_stats.sort_by(|a, b| a.date.cmp(&b.date));
+        summary.most_used_tools = build_tool_usage_stats(tool_usage_map);
+        summary.activity_heatmap = activity_map
+            .into_iter()
+            .map(|((hour, day), (count, tokens))| ActivityHeatmap {
+                hour,
+                day,
+                activity_count: count,
+                tokens_used: tokens,
+            })
+            .collect();
+        summary.avg_tokens_per_session = if summary.total_sessions > 0 {
+            summary.total_tokens / summary.total_sessions as u64
+        } else {
+            0
+        };
+        summary.total_session_duration = session_durations.iter().sum::<u32>();
+        summary.avg_session_duration = if session_durations.is_empty() {
+            0
+        } else {
+            summary.total_session_duration / session_durations.len() as u32
+        };
+        summary.most_active_hour = summary
+            .activity_heatmap
+            .iter()
+            .max_by_key(|item| item.activity_count)
+            .map(|item| item.hour)
+            .unwrap_or(0);
+
+        return Ok(summary);
+    }
+
     let project_name = resolve_provider_project_name(provider, project_path);
     let sessions = load_provider_sessions_for_stats(provider, project_path)?;
     let s_limit = parse_date_limit(start_date, "start_date");
@@ -1394,16 +1948,11 @@ fn get_provider_project_stats_summary(
         let mut seen_usage_keys: HashSet<String> = HashSet::with_capacity(messages.len());
 
         for message in &messages {
-            let usage = extract_token_usage(message);
-            let has_usage = token_usage_has_token_fields(&usage);
-            if !should_include_stats_entry(
-                &message.message_type,
-                message.is_sidechain,
-                has_usage,
-                mode,
-            ) {
+            if !should_include_stats_message(message, mode) {
                 continue;
             }
+
+            let usage = extract_token_usage(message);
 
             // Per-message date filtering
             let parsed_ts = parse_timestamp_utc(&message.timestamp);
@@ -1529,6 +2078,97 @@ fn get_provider_session_comparison(
     start_date: Option<String>,
     end_date: Option<String>,
 ) -> Result<SessionComparison, String> {
+    if provider == StatsProvider::Antigravity {
+        let sessions = load_provider_sessions_for_stats(provider, project_path)?;
+        let s_limit = parse_date_limit(start_date, "start_date");
+        let e_limit = parse_date_limit(end_date, "end_date");
+        let mut all_sessions: Vec<SessionComparisonStats> = Vec::new();
+
+        for session in &sessions {
+            let Some((stats, _records)) = build_antigravity_session_token_stats(
+                session,
+                mode,
+                s_limit.as_ref(),
+                e_limit.as_ref(),
+            )?
+            else {
+                continue;
+            };
+
+            let duration_seconds = match (
+                parse_timestamp_utc(&stats.first_message_time),
+                parse_timestamp_utc(&stats.last_message_time),
+            ) {
+                (Some(first), Some(last)) => (last - first).num_seconds(),
+                _ => 0,
+            };
+
+            all_sessions.push(SessionComparisonStats {
+                session_id: session.actual_session_id.clone(),
+                total_tokens: stats.total_tokens,
+                message_count: stats.message_count,
+                duration_seconds,
+            });
+        }
+
+        let target_session = all_sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .ok_or("Session not found in project")?;
+
+        let total_project_tokens: u64 = all_sessions
+            .iter()
+            .map(|session| session.total_tokens)
+            .sum();
+        let total_project_messages: usize = all_sessions
+            .iter()
+            .map(|session| session.message_count)
+            .sum();
+
+        let percentage_of_project_tokens = if total_project_tokens > 0 {
+            (target_session.total_tokens as f32 / total_project_tokens as f32) * 100.0
+        } else {
+            0.0
+        };
+
+        let percentage_of_project_messages = if total_project_messages > 0 {
+            (target_session.message_count as f32 / total_project_messages as f32) * 100.0
+        } else {
+            0.0
+        };
+
+        let mut sessions_by_tokens = all_sessions.clone();
+        sessions_by_tokens.sort_by_key(|s| std::cmp::Reverse(s.total_tokens));
+        let rank_by_tokens = sessions_by_tokens
+            .iter()
+            .position(|session| session.session_id == session_id)
+            .unwrap_or(0)
+            + 1;
+
+        let mut sessions_by_duration = all_sessions.clone();
+        sessions_by_duration.sort_by_key(|s| std::cmp::Reverse(s.duration_seconds));
+        let rank_by_duration = sessions_by_duration
+            .iter()
+            .position(|session| session.session_id == session_id)
+            .unwrap_or(0)
+            + 1;
+
+        let avg_tokens = if all_sessions.is_empty() {
+            0
+        } else {
+            total_project_tokens / all_sessions.len() as u64
+        };
+
+        return Ok(SessionComparison {
+            session_id: session_id.to_string(),
+            percentage_of_project_tokens,
+            percentage_of_project_messages,
+            rank_by_tokens,
+            rank_by_duration,
+            is_above_average: target_session.total_tokens > avg_tokens,
+        });
+    }
+
     let sessions = load_provider_sessions_for_stats(provider, project_path)?;
     let mut all_sessions: Vec<SessionComparisonStats> = Vec::new();
     let s_limit = parse_date_limit(start_date, "start_date");
@@ -1550,16 +2190,11 @@ fn get_provider_session_comparison(
         let mut seen_usage_keys: HashSet<String> = HashSet::with_capacity(messages.len());
 
         for message in &messages {
-            let usage = extract_token_usage(message);
-            let has_usage = token_usage_has_token_fields(&usage);
-            if !should_include_stats_entry(
-                &message.message_type,
-                message.is_sidechain,
-                has_usage,
-                mode,
-            ) {
+            if !should_include_stats_message(message, mode) {
                 continue;
             }
+
+            let usage = extract_token_usage(message);
 
             // Per-message date filtering
             let parsed_ts = parse_timestamp_utc(&message.timestamp);
@@ -1665,9 +2300,37 @@ pub async fn get_session_token_stats(
     let e_limit = parse_date_limit(end_date, "end_date");
 
     if provider != StatsProvider::Claude {
+        if provider == StatsProvider::Antigravity {
+            let session_dir = PathBuf::from(&session_path);
+            let session_id = session_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| "Invalid antigravity session path".to_string())?
+                .to_string();
+            let project_root = session_dir
+                .parent()
+                .map(|parent| parent.to_string_lossy().to_string())
+                .unwrap_or_else(|| session_path.clone());
+            let sessions = load_provider_sessions_for_stats(provider, &project_root)?;
+            let session = sessions
+                .iter()
+                .find(|candidate| candidate.actual_session_id == session_id)
+                .ok_or_else(|| "Session not found".to_string())?;
+
+            return build_antigravity_session_token_stats(
+                session,
+                mode,
+                s_limit.as_ref(),
+                e_limit.as_ref(),
+            )?
+            .map(|(stats, _records)| stats)
+            .ok_or_else(|| "No valid messages found in session".to_string());
+        }
+
         let messages = match provider {
             StatsProvider::Codex => providers::codex::load_messages(&session_path)?,
             StatsProvider::OpenCode => providers::opencode::load_messages(&session_path)?,
+            StatsProvider::Antigravity => providers::antigravity::load_messages(&session_path)?,
             StatsProvider::Claude => Vec::new(),
         };
 
@@ -1855,6 +2518,7 @@ fn extract_session_token_stats_sync(
         total_output_tokens,
         total_cache_creation_tokens,
         total_cache_read_tokens,
+        total_reasoning_tokens: 0,
         total_tokens,
         message_count: included_message_count,
         first_message_time: first_time.unwrap_or_else(|| "unknown".to_string()),
@@ -2045,6 +2709,7 @@ pub async fn get_project_stats_summary(
         summary.token_distribution.output += stats.token_distribution.output;
         summary.token_distribution.cache_creation += stats.token_distribution.cache_creation;
         summary.token_distribution.cache_read += stats.token_distribution.cache_read;
+        summary.token_distribution.reasoning += stats.token_distribution.reasoning;
 
         // Aggregate tool usage
         for (name, (usage, success)) in stats.tool_usage {
@@ -2514,6 +3179,13 @@ pub async fn get_global_stats_summary(
         file_stats.extend(opencode_stats);
     }
 
+    if providers_to_include.contains(&StatsProvider::Antigravity) {
+        let (antigravity_stats, antigravity_projects) =
+            collect_provider_global_file_stats(StatsProvider::Antigravity, mode, s_ref, e_ref);
+        project_names.extend(antigravity_projects);
+        file_stats.extend(antigravity_stats);
+    }
+
     // When date filtering is active, exclude sessions that ended up with zero messages
     if s_ref.is_some() || e_ref.is_some() {
         file_stats.retain(|s| s.total_messages > 0);
@@ -2538,7 +3210,7 @@ pub async fn get_global_stats_summary(
     let mut tool_usage_map: HashMap<String, (u32, u32)> = HashMap::new();
     let mut daily_stats_map: HashMap<String, DailyStats> = HashMap::new();
     let mut activity_map: HashMap<(u8, u8), (u32, u64)> = HashMap::new();
-    let mut model_usage_map: HashMap<String, (u32, u64, u64, u64, u64, u64)> = HashMap::new();
+    let mut model_usage_map: HashMap<String, ModelUsageAggregate> = HashMap::new();
     let mut project_stats_map: HashMap<String, (u32, u32, u64)> = HashMap::new();
     let mut provider_stats_map: HashMap<StatsProvider, (u32, u32, u64)> = HashMap::new();
     let mut provider_projects_map: HashMap<StatsProvider, HashSet<String>> = HashMap::new();
@@ -2588,16 +3260,19 @@ pub async fn get_global_stats_summary(
         }
 
         // Aggregate model usage
-        for (model, (msg_count, total, input, output, cache_create, cache_read)) in
+        for (model, (msg_count, total, input, output, cache_create, cache_read, reasoning)) in
             stats.model_usage
         {
-            let entry = model_usage_map.entry(model).or_insert((0, 0, 0, 0, 0, 0));
+            let entry = model_usage_map
+                .entry(model)
+                .or_insert((0, 0, 0, 0, 0, 0, 0));
             entry.0 += msg_count;
             entry.1 += total;
             entry.2 += input;
             entry.3 += output;
             entry.4 += cache_create;
             entry.5 += cache_read;
+            entry.6 += reasoning;
         }
 
         // Aggregate provider stats
@@ -2629,7 +3304,6 @@ pub async fn get_global_stats_summary(
             }
         }
     }
-
     // Phase 4: Build final summary structures
     summary.most_used_tools = tool_usage_map
         .into_iter()
@@ -2679,6 +3353,7 @@ pub async fn get_global_stats_summary(
                     output_tokens,
                     cache_creation_tokens,
                     cache_read_tokens,
+                    reasoning_tokens,
                 ),
             )| ModelStats {
                 model_name,
@@ -2688,6 +3363,7 @@ pub async fn get_global_stats_summary(
                 output_tokens,
                 cache_creation_tokens,
                 cache_read_tokens,
+                reasoning_tokens,
             },
         )
         .collect();
@@ -2741,6 +3417,47 @@ mod tests {
     use std::fs::File;
     use std::io::Write;
     use tempfile::TempDir;
+
+    fn make_test_message(
+        provider: Option<&str>,
+        message_type: &str,
+        usage: Option<TokenUsage>,
+    ) -> ClaudeMessage {
+        ClaudeMessage {
+            uuid: "test-uuid".to_string(),
+            parent_uuid: None,
+            session_id: "session-123".to_string(),
+            timestamp: "2025-06-26T10:00:00Z".to_string(),
+            message_type: message_type.to_string(),
+            content: None,
+            project_name: None,
+            tool_use: None,
+            tool_use_result: None,
+            is_sidechain: Some(false),
+            usage,
+            role: None,
+            model: None,
+            stop_reason: None,
+            cost_usd: None,
+            duration_ms: None,
+            message_id: None,
+            snapshot: None,
+            is_snapshot_update: None,
+            data: None,
+            tool_use_id: None,
+            parent_tool_use_id: None,
+            operation: None,
+            subtype: None,
+            level: None,
+            hook_count: None,
+            hook_infos: None,
+            stop_reason_system: None,
+            prevented_continuation: None,
+            compact_metadata: None,
+            microcompact_metadata: None,
+            provider: provider.map(std::string::ToString::to_string),
+        }
+    }
 
     #[test]
     fn test_try_from_raw_log_entry_user_message() {
@@ -3245,6 +3962,18 @@ mod tests {
             detect_project_provider("/Users/jack/.claude/projects/my-project"),
             StatsProvider::Claude
         );
+        if let Some(root) = crate::commands::antigravity::get_antigravity_root() {
+            let antigravity_path = root
+                .join(".token-monitor")
+                .join("rpc-cache")
+                .join("v1")
+                .to_string_lossy()
+                .to_string();
+            assert_eq!(
+                detect_project_provider(&antigravity_path),
+                StatsProvider::Antigravity
+            );
+        }
     }
 
     #[test]
@@ -3265,6 +3994,19 @@ mod tests {
             ),
             StatsProvider::Claude
         );
+        if let Some(root) = crate::commands::antigravity::get_antigravity_root() {
+            let antigravity_session = root
+                .join(".token-monitor")
+                .join("rpc-cache")
+                .join("v1")
+                .join("session-abc")
+                .to_string_lossy()
+                .to_string();
+            assert_eq!(
+                detect_session_provider(&antigravity_session),
+                StatsProvider::Antigravity
+            );
+        }
     }
 
     #[test]
@@ -3273,6 +4015,7 @@ mod tests {
         assert!(providers.contains(&StatsProvider::Claude));
         assert!(providers.contains(&StatsProvider::Codex));
         assert!(providers.contains(&StatsProvider::OpenCode));
+        assert!(providers.contains(&StatsProvider::Antigravity));
     }
 
     #[test]
@@ -3361,6 +4104,122 @@ mod tests {
             Some(false),
             true,
             StatsMode::ConversationOnly
+        ));
+    }
+
+    #[test]
+    fn test_antigravity_conversation_breakdown_uses_chat_message_tokens() {
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let session_dir = temp_dir.path().join("session-123");
+        fs::create_dir_all(&session_dir).expect("failed to create session dir");
+
+        let usage_record = json!({
+            "recordType": "usage",
+            "sessionId": "session-123",
+            "sequence": 0,
+            "model": "claude-sonnet-4-6",
+            "inputTokens": 1000,
+            "outputTokens": 200,
+            "cacheReadTokens": 600,
+            "cacheWriteTokens": 100,
+            "reasoningTokens": 50,
+            "totalTokens": 1950,
+            "raw": {
+                "chatModel": {
+                    "chatStartMetadata": {
+                        "createdAt": "2026-04-14T16:28:44Z",
+                        "contextWindowMetadata": {
+                            "tokenBreakdown": {
+                                "groups": [
+                                    {
+                                        "name": "System Prompt",
+                                        "type": "TOKEN_TYPE_SYSTEM_PROMPT",
+                                        "numTokens": 300
+                                    },
+                                    {
+                                        "name": "Tools",
+                                        "type": "TOKEN_TYPE_TOOLS",
+                                        "numTokens": 300
+                                    },
+                                    {
+                                        "name": "Chat Messages",
+                                        "type": "TOKEN_TYPE_CHAT_MESSAGES",
+                                        "numTokens": 400
+                                    }
+                                ],
+                                "totalTokens": 1000
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        fs::write(session_dir.join("usage.jsonl"), format!("{usage_record}\n"))
+            .expect("failed to write usage file");
+
+        let session = crate::models::ClaudeSession {
+            session_id: "session-123".to_string(),
+            actual_session_id: "session-123".to_string(),
+            file_path: session_dir.to_string_lossy().to_string(),
+            project_name: "Antigravity".to_string(),
+            message_count: 1,
+            first_message_time: "2026-04-14T16:28:44Z".to_string(),
+            last_message_time: "2026-04-14T16:28:44Z".to_string(),
+            last_modified: "2026-04-14T16:28:44Z".to_string(),
+            has_tool_use: true,
+            has_errors: false,
+            summary: None,
+            is_renamed: false,
+            provider: Some("antigravity".to_string()),
+            storage_type: None,
+        };
+
+        let (billing_stats, _) =
+            build_antigravity_session_token_stats(&session, StatsMode::BillingTotal, None, None)
+                .expect("billing stats should parse")
+                .expect("billing stats should exist");
+        let (conversation_stats, _) = build_antigravity_session_token_stats(
+            &session,
+            StatsMode::ConversationOnly,
+            None,
+            None,
+        )
+        .expect("conversation stats should parse")
+        .expect("conversation stats should exist");
+
+        assert_eq!(billing_stats.total_tokens, 1950);
+        assert_eq!(conversation_stats.total_input_tokens, 400);
+        assert_eq!(conversation_stats.total_cache_read_tokens, 240);
+        assert_eq!(conversation_stats.total_cache_creation_tokens, 40);
+        assert_eq!(conversation_stats.total_output_tokens, 200);
+        assert_eq!(conversation_stats.total_reasoning_tokens, 50);
+        assert_eq!(conversation_stats.total_tokens, 930);
+        assert!(conversation_stats.total_tokens < billing_stats.total_tokens);
+    }
+
+    #[test]
+    fn test_should_include_stats_message_skips_synthetic_antigravity_prompt() {
+        let synthetic_prompt = make_test_message(Some("antigravity"), "user", None);
+        assert!(!should_include_stats_message(
+            &synthetic_prompt,
+            StatsMode::BillingTotal
+        ));
+
+        let usage_message = make_test_message(
+            Some("antigravity"),
+            "assistant",
+            Some(TokenUsage {
+                input_tokens: Some(10),
+                output_tokens: Some(5),
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+                service_tier: None,
+            }),
+        );
+        assert!(should_include_stats_message(
+            &usage_message,
+            StatsMode::BillingTotal
         ));
     }
 
@@ -3667,6 +4526,94 @@ mod tests {
             .find(|daily| daily.date == "2025-01-01")
             .expect("missing jan1 daily stat");
         assert_eq!(jan1.session_count, 2);
+    }
+
+    #[test]
+    fn test_antigravity_provider_project_summary_uses_mode_adjusted_daily_tokens() {
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let root = temp_dir.path();
+        let session_dir = root
+            .join(".token-monitor")
+            .join("rpc-cache")
+            .join("v1")
+            .join("session-123");
+        fs::create_dir_all(&session_dir).expect("failed to create antigravity session dir");
+        fs::create_dir_all(root.join("brain").join("session-123"))
+            .expect("failed to create antigravity brain dir");
+
+        let usage_record = json!({
+            "recordType": "usage",
+            "sessionId": "session-123",
+            "sequence": 0,
+            "model": "claude-sonnet-4-6",
+            "inputTokens": 1000,
+            "outputTokens": 200,
+            "cacheReadTokens": 600,
+            "cacheWriteTokens": 100,
+            "reasoningTokens": 50,
+            "totalTokens": 1950,
+            "raw": {
+                "chatModel": {
+                    "chatStartMetadata": {
+                        "createdAt": "2026-04-14T16:28:44Z",
+                        "contextWindowMetadata": {
+                            "tokenBreakdown": {
+                                "groups": [
+                                    {
+                                        "name": "System Prompt",
+                                        "type": "TOKEN_TYPE_SYSTEM_PROMPT",
+                                        "numTokens": 300
+                                    },
+                                    {
+                                        "name": "Tools",
+                                        "type": "TOKEN_TYPE_TOOLS",
+                                        "numTokens": 300
+                                    },
+                                    {
+                                        "name": "Chat Messages",
+                                        "type": "TOKEN_TYPE_CHAT_MESSAGES",
+                                        "numTokens": 400
+                                    }
+                                ],
+                                "totalTokens": 1000
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        fs::write(session_dir.join("usage.jsonl"), format!("{usage_record}\n"))
+            .expect("failed to write antigravity usage file");
+
+        let summary = get_provider_project_stats_summary(
+            StatsProvider::Antigravity,
+            &root.to_string_lossy(),
+            None,
+            None,
+            StatsMode::ConversationOnly,
+        )
+        .expect("failed to build antigravity project summary");
+
+        assert_eq!(summary.total_tokens, 930);
+        assert_eq!(summary.token_distribution.input, 400);
+        assert_eq!(summary.token_distribution.output, 200);
+
+        let day = summary
+            .daily_stats
+            .iter()
+            .find(|daily| daily.date == "2026-04-14")
+            .expect("missing daily summary");
+        assert_eq!(day.total_tokens, 930);
+        assert_eq!(day.input_tokens, 400);
+        assert_eq!(day.output_tokens, 200);
+
+        let heatmap = summary
+            .activity_heatmap
+            .iter()
+            .find(|entry| entry.hour == 16 && entry.day == 2)
+            .expect("missing activity heatmap entry");
+        assert_eq!(heatmap.tokens_used, 930);
     }
 
     #[tokio::test]
