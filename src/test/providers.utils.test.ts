@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PROVIDER_ID,
+  PROVIDER_IDS,
   calculateConversationBreakdownCoverage,
-  hasAnyConversationBreakdownProvider,
-  hasNonDefaultProvider,
   getProviderId,
   getProviderLabel,
+  getResumeCommand,
+  hasAnyConversationBreakdownProvider,
+  hasNonDefaultProvider,
   normalizeProviderIds,
-  PROVIDER_IDS,
   supportsConversationBreakdown,
+  supportsNativeRename,
+  supportsSessionDeletion,
 } from "@/utils/providers";
 
 describe("providers utils", () => {
@@ -42,6 +45,7 @@ describe("providers utils", () => {
       "cline",
       "codex",
       "cursor",
+      "forgecode",
       "gemini",
       "opencode",
     ]);
@@ -50,14 +54,31 @@ describe("providers utils", () => {
   it("knows which providers support conversation breakdown", () => {
     expect(supportsConversationBreakdown("claude")).toBe(true);
     expect(supportsConversationBreakdown("antigravity")).toBe(true);
+    expect(supportsConversationBreakdown("forgecode")).toBe(true);
     expect(supportsConversationBreakdown("codex")).toBe(false);
     expect(supportsConversationBreakdown("opencode")).toBe(false);
     expect(supportsConversationBreakdown("unknown")).toBe(false);
   });
 
+  it("reports provider capabilities for ForgeCode parity actions", () => {
+    expect(supportsNativeRename("forgecode")).toBe(true);
+    expect(supportsSessionDeletion("forgecode")).toBe(true);
+    expect(getResumeCommand("forgecode", "conversation-123")).toBe(
+      "forge conversation resume conversation-123"
+    );
+    expect(getResumeCommand("codex", "conversation-123")).toBeNull();
+  });
+
+  it("getResumeCommand fails closed for unknown provider strings", () => {
+    expect(getResumeCommand("not-a-real-provider", "abc")).toBeNull();
+    expect(getResumeCommand(undefined, "abc")).toBeNull();
+    expect(getResumeCommand("claude", "")).toBeNull();
+  });
+
   it("detects whether current scope has any supported provider", () => {
     expect(hasAnyConversationBreakdownProvider(["claude"])).toBe(true);
     expect(hasAnyConversationBreakdownProvider(["antigravity"])).toBe(true);
+    expect(hasAnyConversationBreakdownProvider(["forgecode"])).toBe(true);
     expect(hasAnyConversationBreakdownProvider(["codex", "opencode"])).toBe(
       false
     );
