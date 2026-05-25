@@ -255,6 +255,7 @@ pub fn load_sessions(
                     is_renamed: false,
                     provider: Some("codex".to_string()),
                     storage_type: None,
+                    entrypoint: None,
                 });
             }
         }
@@ -283,6 +284,7 @@ pub fn load_messages(session_path: &str) -> Result<Vec<ClaudeMessage>, String> {
     let mut current_model: Option<String> = None;
     let mut prev_input_tokens: u32 = 0;
     let mut prev_output_tokens: u32 = 0;
+    let mut prev_cached_tokens: u32 = 0;
     let mut msg_counter = 0u64;
 
     for &(start, end) in &ranges {
@@ -348,30 +350,37 @@ pub fn load_messages(session_path: &str) -> Result<Vec<ClaudeMessage>, String> {
                     if event_type == "token_count" {
                         let usage_totals = extract_token_totals(payload)
                             .or_else(|| extract_last_token_usage(payload));
-                        let Some((input, output)) = usage_totals else {
+                        let Some((input, output, cached)) = usage_totals else {
                             continue;
                         };
 
-                        let (delta_input, delta_output) =
+                        let (delta_input, delta_output, delta_cached) =
                             if prev_input_tokens == 0 && prev_output_tokens == 0 {
-                                (input, output)
+                                (input, output, cached)
                             } else {
                                 (
                                     input.saturating_sub(prev_input_tokens),
                                     output.saturating_sub(prev_output_tokens),
+                                    cached.saturating_sub(prev_cached_tokens),
                                 )
                             };
                         prev_input_tokens = input;
                         prev_output_tokens = output;
+                        prev_cached_tokens = cached;
+
+                        // Separate non-cached input from cached input for correct billing.
+                        // OpenAI's input_tokens includes cached_input_tokens as a subset,
+                        // but they are billed at different rates (cached gets 90% discount).
+                        let non_cached_input = delta_input.saturating_sub(delta_cached);
 
                         // Apply to last assistant message without usage
                         if let Some(last_msg) = messages.last_mut() {
                             if last_msg.message_type == "assistant" && last_msg.usage.is_none() {
                                 last_msg.usage = Some(TokenUsage {
-                                    input_tokens: Some(delta_input),
+                                    input_tokens: Some(non_cached_input),
                                     output_tokens: Some(delta_output),
                                     cache_creation_input_tokens: None,
-                                    cache_read_input_tokens: None,
+                                    cache_read_input_tokens: Some(delta_cached),
                                     service_tier: None,
                                 });
                             }
@@ -513,11 +522,18 @@ fn extract_session_info(rollout_path: &Path) -> Result<SessionInfo, String> {
                             last_time.clone_from(&ts);
                         }
 
-                        // Extract first user message as summary
+                        // Extract first user message as summary, skipping
+                        // auto-injected wrapper blocks (e.g. <environment_context>)
+                        // that codex CLI / Codex Desktop prepend to every session —
+                        // they are system context, not a real user prompt.
                         if summary.is_none() {
                             if let Some(role) = payload.get("role").and_then(|r| r.as_str()) {
                                 if role == "user" {
-                                    summary = extract_text_from_content(payload);
+                                    if let Some(text) = extract_text_from_content(payload) {
+                                        if !is_codex_auto_injected_user_text(&text) {
+                                            summary = Some(text);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -581,6 +597,16 @@ fn extract_text_from_content(item: &Value) -> Option<String> {
         }
     }
     None
+}
+
+/// Returns true when `text` is an auto-injected wrapper block prepended by
+/// codex CLI / Codex Desktop to every session (currently
+/// `<environment_context>...</environment_context>`). These look like user
+/// messages structurally but contain no real prompt, so they should be
+/// skipped when picking a session summary preview.
+fn is_codex_auto_injected_user_text(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with("<environment_context>")
 }
 
 fn convert_codex_item(
@@ -993,20 +1019,28 @@ fn convert_codex_compacted(
     msg
 }
 
-fn extract_token_totals(payload: &Value) -> Option<(u32, u32)> {
+fn extract_token_totals(payload: &Value) -> Option<(u32, u32, u32)> {
     // Recent Codex logs store usage in payload.info.total_token_usage.
     let total = payload.get("info")?.get("total_token_usage")?;
     let input = total.get("input_tokens")?.as_u64()? as u32;
     let output = total.get("output_tokens")?.as_u64()? as u32;
-    Some((input, output))
+    let cached = total
+        .get("cached_input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    Some((input, output, cached))
 }
 
-fn extract_last_token_usage(payload: &Value) -> Option<(u32, u32)> {
+fn extract_last_token_usage(payload: &Value) -> Option<(u32, u32, u32)> {
     // Fallback for older/newer variants that only include last token usage.
     let last = payload.get("info")?.get("last_token_usage")?;
     let input = last.get("input_tokens")?.as_u64()? as u32;
     let output = last.get("output_tokens")?.as_u64()? as u32;
-    Some((input, output))
+    let cached = last
+        .get("cached_input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    Some((input, output, cached))
 }
 
 fn map_codex_tool_name(name: &str) -> &str {
@@ -1352,7 +1386,7 @@ mod tests {
                 }
             }
         });
-        assert_eq!(extract_token_totals(&payload), Some((120, 30)));
+        assert_eq!(extract_token_totals(&payload), Some((120, 30, 0)));
     }
 
     #[test]
@@ -2291,5 +2325,98 @@ mod tests {
 
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].session_id, "archived-session");
+    }
+
+    /// Helper: write `lines` as one JSON-per-line into a fresh rollout file
+    /// and run `extract_session_info` against it. Returns the resulting
+    /// `SessionInfo`. Used by the env-context-skip tests below.
+    fn run_extract_session_info_on_lines(lines: Vec<Value>) -> SessionInfo {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let rollout_path = tmp.path().join("rollout-2026-05-13.jsonl");
+        let body = lines
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&rollout_path, format!("{body}\n")).expect("rollout fixture should be written");
+        extract_session_info(&rollout_path).expect("extract_session_info should succeed")
+    }
+
+    fn session_meta_line() -> Value {
+        json!({
+            "timestamp": "2026-05-13T08:00:00Z",
+            "type": "session_meta",
+            "payload": { "id": "sess-env-ctx", "cwd": "/tmp/proj" }
+        })
+    }
+
+    fn user_message_line(timestamp: &str, text: &str) -> Value {
+        json!({
+            "timestamp": timestamp,
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": text }]
+            }
+        })
+    }
+
+    const ENV_CONTEXT_BLOCK: &str = "<environment_context>\n  <cwd>/tmp/proj</cwd>\n  <shell>powershell</shell>\n  <current_date>2026-05-13</current_date>\n  <timezone>Asia/Shanghai</timezone>\n</environment_context>";
+
+    #[test]
+    /// First user message is an auto-injected `<environment_context>` block;
+    /// second user message is a real prompt — the summary should be the
+    /// real prompt, not the env-context block.
+    fn extract_session_info_skips_environment_context_wrapper() {
+        let info = run_extract_session_info_on_lines(vec![
+            session_meta_line(),
+            user_message_line("2026-05-13T08:00:01Z", ENV_CONTEXT_BLOCK),
+            user_message_line(
+                "2026-05-13T08:00:02Z",
+                "Please review my PR for the Antigravity provider.",
+            ),
+        ]);
+
+        assert_eq!(
+            info.summary.as_deref(),
+            Some("Please review my PR for the Antigravity provider.")
+        );
+        // message_count counts *every* response_item type=message,
+        // including the skipped wrapper, so the count surfaces real
+        // activity volume.
+        assert_eq!(info.message_count, 2);
+    }
+
+    #[test]
+    /// First user message is a real prompt — extractor must not regress
+    /// pre-existing behaviour for sessions without an env-context wrapper.
+    fn extract_session_info_uses_first_real_user_prompt() {
+        let info = run_extract_session_info_on_lines(vec![
+            session_meta_line(),
+            user_message_line("2026-05-13T08:00:01Z", "fix the WSL crash"),
+            user_message_line("2026-05-13T08:00:02Z", "second message"),
+        ]);
+
+        assert_eq!(info.summary.as_deref(), Some("fix the WSL crash"));
+        assert_eq!(info.message_count, 2);
+    }
+
+    #[test]
+    /// Session contains only auto-injected wrapper messages and no real
+    /// prompt — summary stays None, matching legacy empty-session behaviour.
+    fn extract_session_info_env_context_only_yields_no_summary() {
+        let info = run_extract_session_info_on_lines(vec![
+            session_meta_line(),
+            user_message_line("2026-05-13T08:00:01Z", ENV_CONTEXT_BLOCK),
+        ]);
+
+        assert!(
+            info.summary.is_none(),
+            "env-context-only sessions should not produce a misleading summary; got {:?}",
+            info.summary
+        );
+        // The wrapper still counts as a message — only the summary is gated.
+        assert_eq!(info.message_count, 1);
     }
 }

@@ -5,8 +5,8 @@
  * 직접 수정하지 마세요.
  *
  * 생성 명령: pnpm run generate:i18n-types
- * 생성 시간: 2026-05-06T15:19:30.989Z
- * 총 키 개수: 1770
+ * 생성 시간: 2026-05-25T07:37:00.105Z
+ * 총 키 개수: 1781
  * Namespace 수: 11
  */
 
@@ -40,7 +40,7 @@ export type I18nNamespace =
   | 'recentEdits';
 
 /**
- * common namespace의 번역 키 (160개)
+ * common namespace의 번역 키 (161개)
  * 파일: locales/{lang}/common.json
  */
 export type CommonKeys =
@@ -76,6 +76,7 @@ export type CommonKeys =
   | 'common.error.updateCheckFailed'
   | 'common.error.updateDownloadCompleteRestart'
   | 'common.error.updateDownloadCompleteRestartHint'
+  | 'common.error.updateRelaunchFailed'
   | 'common.errorOccurred'
   | 'common.expand'
   | 'common.help'
@@ -392,7 +393,7 @@ export type AnalyticsKeys =
   | 'analytics.weeklyActivity';
 
 /**
- * session namespace의 번역 키 (196개)
+ * session namespace의 번역 키 (205개)
  * 파일: locales/{lang}/session.json
  */
 export type SessionKeys =
@@ -488,6 +489,7 @@ export type SessionKeys =
   | 'session.cliSync.title'
   | 'session.copiedFilePath'
   | 'session.copiedResumeCommand'
+  | 'session.copiedResumeCommandNoCwd'
   | 'session.copiedSessionId'
   | 'session.copyFilePath'
   | 'session.copyResumeCommand'
@@ -511,6 +513,11 @@ export type SessionKeys =
   | 'session.filter.showingCount'
   | 'session.filter.sortNewestFirst'
   | 'session.filter.sortOldestFirst'
+  | 'session.filter.source.all'
+  | 'session.filter.source.cli'
+  | 'session.filter.source.desktop'
+  | 'session.filter.source.label'
+  | 'session.filter.source.vscode'
   | 'session.id'
   | 'session.interaction.assistantMessage'
   | 'session.interaction.cacheHit'
@@ -545,6 +552,9 @@ export type SessionKeys =
   | 'session.item.archivedDescription'
   | 'session.item.containsErrors'
   | 'session.item.containsToolUse'
+  | 'session.item.entrypoint.cli'
+  | 'session.item.entrypoint.desktop'
+  | 'session.item.entrypoint.vscode'
   | 'session.item.lastModified'
   | 'session.item.messageCount'
   | 'session.item.session'
@@ -1734,7 +1744,7 @@ export type RenderersKeys =
   | 'webSearchResultRenderer.title';
 
 /**
- * update namespace의 번역 키 (72개)
+ * update namespace의 번역 키 (73개)
  * 파일: locales/{lang}/update.json
  */
 export type UpdateKeys =
@@ -1757,6 +1767,7 @@ export type UpdateKeys =
   | 'simpleUpdateModal.reportIssue'
   | 'simpleUpdateModal.reportIssuePrompt'
   | 'simpleUpdateModal.reportIssueSubject'
+  | 'simpleUpdateModal.restartNow'
   | 'simpleUpdateModal.restarting'
   | 'simpleUpdateModal.restartingDescription'
   | 'simpleUpdateModal.restartingShort'
@@ -2209,6 +2220,7 @@ export type TranslationKey =
   | 'common.error.updateCheckFailed'
   | 'common.error.updateDownloadCompleteRestart'
   | 'common.error.updateDownloadCompleteRestartHint'
+  | 'common.error.updateRelaunchFailed'
   | 'common.errorOccurred'
   | 'common.expand'
   | 'common.help'
@@ -2787,6 +2799,7 @@ export type TranslationKey =
   | 'session.cliSync.title'
   | 'session.copiedFilePath'
   | 'session.copiedResumeCommand'
+  | 'session.copiedResumeCommandNoCwd'
   | 'session.copiedSessionId'
   | 'session.copyFilePath'
   | 'session.copyResumeCommand'
@@ -2810,6 +2823,11 @@ export type TranslationKey =
   | 'session.filter.showingCount'
   | 'session.filter.sortNewestFirst'
   | 'session.filter.sortOldestFirst'
+  | 'session.filter.source.all'
+  | 'session.filter.source.cli'
+  | 'session.filter.source.desktop'
+  | 'session.filter.source.label'
+  | 'session.filter.source.vscode'
   | 'session.id'
   | 'session.interaction.assistantMessage'
   | 'session.interaction.cacheHit'
@@ -2844,6 +2862,9 @@ export type TranslationKey =
   | 'session.item.archivedDescription'
   | 'session.item.containsErrors'
   | 'session.item.containsToolUse'
+  | 'session.item.entrypoint.cli'
+  | 'session.item.entrypoint.desktop'
+  | 'session.item.entrypoint.vscode'
   | 'session.item.lastModified'
   | 'session.item.messageCount'
   | 'session.item.session'
@@ -3421,6 +3442,7 @@ export type TranslationKey =
   | 'simpleUpdateModal.reportIssue'
   | 'simpleUpdateModal.reportIssuePrompt'
   | 'simpleUpdateModal.reportIssueSubject'
+  | 'simpleUpdateModal.restartNow'
   | 'simpleUpdateModal.restarting'
   | 'simpleUpdateModal.restartingDescription'
   | 'simpleUpdateModal.restartingShort'
