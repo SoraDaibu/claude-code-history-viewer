@@ -1026,7 +1026,7 @@ fn extract_token_totals(payload: &Value) -> Option<(u32, u32, u32)> {
     let output = total.get("output_tokens")?.as_u64()? as u32;
     let cached = total
         .get("cached_input_tokens")
-        .and_then(|v| v.as_u64())
+        .and_then(Value::as_u64)
         .unwrap_or(0) as u32;
     Some((input, output, cached))
 }
@@ -1038,7 +1038,7 @@ fn extract_last_token_usage(payload: &Value) -> Option<(u32, u32, u32)> {
     let output = last.get("output_tokens")?.as_u64()? as u32;
     let cached = last
         .get("cached_input_tokens")
-        .and_then(|v| v.as_u64())
+        .and_then(Value::as_u64)
         .unwrap_or(0) as u32;
     Some((input, output, cached))
 }
